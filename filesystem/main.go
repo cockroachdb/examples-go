@@ -68,10 +68,10 @@ func main() {
 
 	{
 		// For testing only.
-		if err := cfs.create(0, "myfile", newNode(1, "myfile", false)); err != nil {
+		if err := cfs.create(0, Node{Name: "myfile", IsDir: false}); err != nil {
 			log.Fatal(err)
 		}
-		if err := cfs.create(0, "mydir", newNode(2, "mydir", true)); err != nil {
+		if err := cfs.create(0, Node{Name: "mydir", IsDir: true}); err != nil {
 			log.Fatal(err)
 		}
 		results, err := cfs.list(0)

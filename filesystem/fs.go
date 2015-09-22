@@ -58,11 +58,13 @@ func (cfs CFS) initSchema() error {
 	return err
 }
 
-func (cfs CFS) create(parentID uint64, name, inode string) error {
-	var id int64
-	if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
-		return err
+func (cfs CFS) create(parentID uint64, node Node) error {
+	if node.ID == 0 {
+		if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&node.ID); err != nil {
+			return err
+		}
 	}
+	inode := node.toJSON()
 	tx, err := cfs.db.Begin()
 	if err != nil {
 		return err
@@ -71,7 +73,7 @@ func (cfs CFS) create(parentID uint64, name, inode string) error {
 INSERT INTO fs.inode VALUES ($1, $2);
 INSERT INTO fs.namespace VALUES ($3, $4, $1);
 `
-	if _, err := tx.Exec(sql, id, inode, parentID, name); err != nil {
+	if _, err := tx.Exec(sql, node.ID, inode, parentID, node.Name); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -120,7 +122,7 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 
 // Root returns the filesystem's root node.
 func (cfs CFS) Root() (fs.Node, error) {
-	return &Node{cfs: cfs, Name: "", ID: 0, IsDir: true}, nil
+	return &Node{cfs: cfs, Name: "", ID: 1, IsDir: true}, nil
 }
 
 // GenerateInode returns a new inode ID.

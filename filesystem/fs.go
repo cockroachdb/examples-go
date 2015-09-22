@@ -43,10 +43,10 @@ CREATE TABLE fs.inode (
 )
 
 // Root
-var _ = fs.FS(&CFS{})
+var _ fs.FS = &CFS{}
 
 // GenerateInode
-var _ = fs.FSInodeGenerator(&CFS{})
+var _ fs.FSInodeGenerator = &CFS{}
 
 // CFS implements a filesystem on top of cockroach.
 type CFS struct {
@@ -79,12 +79,13 @@ INSERT INTO fs.namespace VALUES ($3, $4, $1);
 }
 
 func (cfs CFS) lookup(parentID uint64, name string) (string, error) {
-	const sql = `
-SELECT inode FROM fs.inode WHERE id =
-  (SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2))
-`
+	// TODO(pmattis): investigate: "unable to encode table key: parser.DTuple" and restore:
+	//if err := cfs.db.QueryRow(`SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`,
+	//	parentID, name).Scan(&id); err != nil {
 	var inode string
-	if err := cfs.db.QueryRow(`sql`, parentID, name).Scan(&inode); err != nil {
+	const sql = `SELECT inode FROM fs.inode WHERE id = 
+(SELECT id FROM fs.namespace WHERE (parentID, name) IN (($1, $2)))`
+	if err := cfs.db.QueryRow(sql, parentID, name).Scan(&inode); err != nil {
 		return "", err
 	}
 	return inode, nil
@@ -95,8 +96,7 @@ SELECT inode FROM fs.inode WHERE id =
 // Inode uint64
 // Type DirentType (optional)
 // Name string
-// TODO(pmattis): lookup all inodes and fill in the type,
-// this will save a Getattr().
+// TODO(pmattis): lookup all inodes and fill in the type, this will save a Getattr().
 func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 	rows, err := cfs.db.Query(`SELECT name, id FROM fs.namespace WHERE parentID = $1`, parentID)
 	if err != nil {
@@ -104,13 +104,12 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 	}
 
 	var results []fuse.Dirent
+	dirent := fuse.Dirent{Type: fuse.DT_Unknown}
 	for rows.Next() {
-		var name string
-		var id uint64
-		if err := rows.Scan(&name, &id); err != nil {
+		if err := rows.Scan(&dirent.Name, &dirent.Inode); err != nil {
 			return nil, err
 		}
-		results = append(results, fuse.Dirent{Inode: id, Type: fuse.DT_Unknown, Name: name})
+		results = append(results, dirent)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -121,7 +120,7 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 
 // Root returns the filesystem's root node.
 func (cfs CFS) Root() (fs.Node, error) {
-	return &Node{cfs: cfs, name: "", id: 0, isDir: true}, nil
+	return &Node{cfs: cfs, Name: "", ID: 0, IsDir: true}, nil
 }
 
 // GenerateInode returns a new inode ID.

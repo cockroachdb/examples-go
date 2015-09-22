@@ -41,6 +41,12 @@ CREATE TABLE fs.inode (
 `
 )
 
+// Root
+var _ = fs.FS(&CFS{})
+
+// GenerateInode
+var _ = fs.FSInodeGenerator(&CFS{})
+
 // CFS implements a filesystem on top of cockroach.
 type CFS struct {
 	db *sql.DB
@@ -113,8 +119,10 @@ func (fs CFS) Root() (fs.Node, error) {
 }
 
 // GenerateInode returns a new inode ID.
-// TODO(marc): if not implemented, the fuse library auto-generates IDs
-// from path hashes.
-// func (CFS) GenerateInode(parentInode uint64, name string) uint64 {
-// 	return 0
-// }
+func (fs CFS) GenerateInode(parentInode uint64, name string) uint64 {
+	var id uint64
+	if err := fs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
+		panic(err)
+	}
+	return id
+}

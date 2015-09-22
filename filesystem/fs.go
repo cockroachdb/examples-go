@@ -122,7 +122,7 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 
 // Root returns the filesystem's root node.
 func (cfs CFS) Root() (fs.Node, error) {
-	return &Node{cfs: cfs, Name: "", ID: 0, IsDir: true}, nil
+	return &Node{cfs: cfs, Name: "", ID: 1, IsDir: true}, nil
 }
 
 // GenerateInode returns a new inode ID.

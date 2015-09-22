@@ -32,9 +32,12 @@ var _ = fs.Node(&Node{})
 // Lookup
 var _ = fs.NodeStringLookuper(&Node{})
 
+// HandleReadDirAller
+var _ = fs.HandleReadDirAller(&Node{})
+
 // Node implements the Node interface.
 type Node struct {
-	fs   CFS `json:"-"`
+	cfs  CFS `json:"-"`
 	name string
 	id   uint64
 	// TODO(marc): switch to enum for other types.
@@ -65,7 +68,7 @@ func (n Node) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	if !n.isDir {
 		return nil, fuse.ENOSYS
 	}
-	raw, err := n.fs.lookup(n.id, name)
+	raw, err := n.cfs.lookup(n.id, name)
 	if err != nil {
 		// TODO(marc): handle missing.
 		return nil, err
@@ -75,11 +78,11 @@ func (n Node) Lookup(ctx context.Context, name string) (fs.Node, error) {
 		// TODO(marc): this defaults to EIO.
 		return nil, err
 	}
-	node.fs = n.fs
+	node.cfs = n.cfs
 	return node, nil
 }
 
 // ReadDirAll returns the list of child inodes.
-func (Node) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	return nil, fuse.ENOSYS
+func (n Node) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	return n.cfs.list(n.id)
 }

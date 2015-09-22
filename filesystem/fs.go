@@ -20,6 +20,7 @@ package main
 import (
 	"database/sql"
 
+	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 )
 
@@ -52,17 +53,17 @@ type CFS struct {
 	db *sql.DB
 }
 
-func (fs CFS) initSchema() error {
-	_, err := fs.db.Exec(fsSchema)
+func (cfs CFS) initSchema() error {
+	_, err := cfs.db.Exec(fsSchema)
 	return err
 }
 
-func (fs CFS) create(parentID uint64, name, inode string) error {
+func (cfs CFS) create(parentID uint64, name, inode string) error {
 	var id int64
-	if err := fs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
+	if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
 		return err
 	}
-	tx, err := fs.db.Begin()
+	tx, err := cfs.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -77,51 +78,56 @@ INSERT INTO fs.namespace VALUES ($3, $4, $1);
 	return tx.Commit()
 }
 
-func (fs CFS) lookup(parentID uint64, name string) (string, error) {
+func (cfs CFS) lookup(parentID uint64, name string) (string, error) {
 	const sql = `
 SELECT inode FROM fs.inode WHERE id =
   (SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2))
 `
 	var inode string
-	if err := fs.db.QueryRow(`sql`, parentID, name).Scan(&inode); err != nil {
+	if err := cfs.db.QueryRow(`sql`, parentID, name).Scan(&inode); err != nil {
 		return "", err
 	}
 	return inode, nil
 }
 
-func (fs CFS) list(parentID uint64) ([]string, error) {
-	rows, err := fs.db.Query(`SELECT name, id FROM fs.namespace WHERE parentID = $1`, parentID)
+// list returns the children of the node with id 'parentID'.
+// Dirent consists of:
+// Inode uint64
+// Type DirentType (optional)
+// Name string
+// TODO(pmattis): lookup all inodes and fill in the type,
+// this will save a Getattr().
+func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
+	rows, err := cfs.db.Query(`SELECT name, id FROM fs.namespace WHERE parentID = $1`, parentID)
 	if err != nil {
 		return nil, err
 	}
 
-	var results []string
+	var results []fuse.Dirent
 	for rows.Next() {
 		var name string
-		var id int64
+		var id uint64
 		if err := rows.Scan(&name, &id); err != nil {
 			return nil, err
 		}
-		results = append(results, name)
+		results = append(results, fuse.Dirent{Inode: id, Type: fuse.DT_Unknown, Name: name})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	// TODO(pmattis): Lookup all of the inodes for all of the ids in single
-	// "SELECT ... WHERE id IN" statement.
 	return results, nil
 }
 
 // Root returns the filesystem's root node.
-func (fs CFS) Root() (fs.Node, error) {
-	return &Node{fs: fs, name: "", id: 0, isDir: true}, nil
+func (cfs CFS) Root() (fs.Node, error) {
+	return &Node{cfs: cfs, name: "", id: 0, isDir: true}, nil
 }
 
 // GenerateInode returns a new inode ID.
-func (fs CFS) GenerateInode(parentInode uint64, name string) uint64 {
+func (cfs CFS) GenerateInode(parentInode uint64, name string) uint64 {
 	var id uint64
-	if err := fs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
+	if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
 		panic(err)
 	}
 	return id

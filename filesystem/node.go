@@ -35,6 +35,9 @@ var _ fs.NodeStringLookuper = &Node{}
 // HandleReadDirAller
 var _ fs.HandleReadDirAller = &Node{}
 
+// Mkdir
+var _ fs.NodeMkdirer = &Node{}
+
 // Node implements the Node interface.
 type Node struct {
 	cfs  CFS
@@ -47,9 +50,8 @@ type Node struct {
 	Data []byte
 }
 
-// newNode returns a json-encoded node.
-func newNode(id uint64, name string, isDir bool) string {
-	n := Node{Name: name, ID: id, IsDir: isDir}
+// toJSON returns the json-encoded string for this node.
+func (n Node) toJSON() string {
 	ret, err := json.Marshal(n)
 	if err != nil {
 		panic(err)
@@ -84,7 +86,9 @@ func (n Node) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	}
 	raw, err := n.cfs.lookup(n.ID, name)
 	if err != nil {
-		// TODO(marc): handle missing.
+		if err.Error() == "sql: no rows in result set" {
+			return nil, fuse.ENOENT
+		}
 		return nil, err
 	}
 	node := &Node{}
@@ -99,4 +103,21 @@ func (n Node) Lookup(ctx context.Context, name string) (fs.Node, error) {
 // ReadDirAll returns the list of child inodes.
 func (n Node) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	return n.cfs.list(n.ID)
+}
+
+// Mkdir creates a directory in 'n'.
+// We let the sql query fail if the directory already exists.
+// TODO(marc): better handling of errors.
+func (n Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+	node := &Node{
+		cfs:   n.cfs,
+		Name:  req.Name,
+		IsDir: true,
+	}
+
+	err := n.cfs.create(n.ID, *node)
+	if err != nil {
+		return nil, err
+	}
+	return node, nil
 }

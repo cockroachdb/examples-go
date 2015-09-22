@@ -18,121 +18,65 @@
 package main
 
 import (
-	"database/sql"
+	"encoding/json"
+	"os"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"golang.org/x/net/context"
 )
 
-const (
-	fsSchema = `
-CREATE DATABASE fs;
+// Attr
+var _ = fs.Node(&Node{})
 
-CREATE TABLE fs.namespace (
-  parentID INT,
-  name     STRING,
-  id       INT,
-  PRIMARY KEY (parentID, name)
-);
-
-CREATE TABLE fs.inode (
-  id    INT PRIMARY KEY,
-  inode STRING
-);
-`
-)
-
-// CFS implements a filesystem on top of cockroach.
-type CFS struct {
-	db *sql.DB
-}
-
-func (fs CFS) initSchema() error {
-	_, err := fs.db.Exec(fsSchema)
-	return err
-}
-
-func (fs CFS) create(parentID uint64, name, inode string) error {
-	var id int64
-	if err := fs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
-		return err
-	}
-	tx, err := fs.db.Begin()
-	if err != nil {
-		return err
-	}
-	const sql = `
-INSERT INTO fs.inode VALUES ($1, $2);
-INSERT INTO fs.namespace VALUES ($3, $4, $1);
-`
-	if _, err := tx.Exec(sql, id, inode, parentID, name); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
-}
-
-func (fs CFS) lookup(parentID uint64, name string) (string, error) {
-	const sql = `
-SELECT inode FROM fs.inode WHERE id =
-  (SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2))
-`
-	var inode string
-	if err := fs.db.QueryRow(`sql`, parentID, name).Scan(&inode); err != nil {
-		return "", err
-	}
-	return inode, nil
-}
-
-func (fs CFS) list(parentID uint64) ([]string, error) {
-	rows, err := fs.db.Query(`SELECT name, id FROM fs.namespace WHERE parentID = $1`, parentID)
-	if err != nil {
-		return nil, err
-	}
-
-	var results []string
-	for rows.Next() {
-		var name string
-		var id int64
-		if err := rows.Scan(&name, &id); err != nil {
-			return nil, err
-		}
-		results = append(results, name)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// TODO(pmattis): Lookup all of the inodes for all of the ids in single
-	// "SELECT ... WHERE id IN" statement.
-	return results, nil
-}
-
-// Root returns the filesystem's root node.
-func (fs CFS) Root() (fs.Node, error) {
-	return Node{fs}, nil
-}
-
-// GenerateInode returns a new inode ID.
-// TODO(marc): For now, we let the library pick it.
-//func (CFS) GenerateInode(parentInode uint64, name string) uint64 {
-//	return 0
-//}
+// Lookup
+var _ = fs.NodeStringLookuper(&Node{})
 
 // Node implements the Node interface.
 type Node struct {
-	fs CFS
+	fs   CFS `json:"-"`
+	name string
+	id   uint64
+	// TODO(marc): switch to enum for other types.
+	isDir bool
+
+	// For files only
+	data []byte
 }
 
-// Attr fills in 'a' with the node metadata.
-func (Node) Attr(ctx context.Context, a *fuse.Attr) error {
-	return fuse.ENOSYS
+// Attr fills attr with the standard metadata for the node.
+func (n Node) Attr(ctx context.Context, a *fuse.Attr) error {
+	if n.isDir {
+		a.Mode = os.ModeDir | 0755
+	} else {
+		a.Mode = 0644
+		a.Size = uint64(len(n.data))
+	}
+	return nil
 }
 
-// Lookup looks for a node with 'name' in the receiver.
-func (Node) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	return nil, fuse.ENOSYS
+// Lookup looks up a specific entry in the receiver,
+// which must be a directory.  Lookup should return a Node
+// corresponding to the entry.  If the name does not exist in
+// the directory, Lookup should return ENOENT.
+//
+// Lookup need not to handle the names "." and "..".
+func (n Node) Lookup(ctx context.Context, name string) (fs.Node, error) {
+	if !n.isDir {
+		return nil, fuse.ENOSYS
+	}
+	raw, err := n.fs.lookup(n.id, name)
+	if err != nil {
+		// TODO(marc): handle missing.
+		return nil, err
+	}
+	node := &Node{}
+	if err := json.Unmarshal([]byte(raw), node); err != nil {
+		// TODO(marc): this defaults to EIO.
+		return nil, err
+	}
+	node.fs = n.fs
+	return node, nil
 }
 
 // ReadDirAll returns the list of child inodes.

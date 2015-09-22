@@ -92,7 +92,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// defer c.Close()
+	defer c.Close()
 
 	// Serve root.
 	err = fs.Serve(c, cfs)

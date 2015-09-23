@@ -167,6 +167,18 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 	return results, nil
 }
 
+// update writes the updated value of 'node'.
+func (cfs CFS) update(node Node) error {
+	inode := node.toJSON()
+	const sql = `
+UPDATE fs.inode SET inode = $1 WHERE id = $2;
+`
+	if _, err := cfs.db.Exec(sql, inode, node.ID); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Root returns the filesystem's root node.
 func (cfs CFS) Root() (fs.Node, error) {
 	return &Node{cfs: cfs, Name: "", ID: rootNodeID, IsDir: true}, nil

@@ -101,11 +101,8 @@ SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
 
 	// Check if there are any children.
 	if checkChildren {
-		const countSql = `
-SELECT count(parentID) FROM fs.namespace WHERE parentID = $1`
-
-		var count uint64
-		if err := tx.QueryRow(countSql, id).Scan(&count); err != nil {
+		count, err := countChildren(tx, id)
+		if err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -127,17 +124,8 @@ DELETE FROM fs.inode WHERE id = $3;
 	return tx.Commit()
 }
 
-func (cfs CFS) lookup(parentID uint64, name string) (string, error) {
-	// TODO(pmattis): investigate: "unable to encode table key: parser.DTuple" and restore:
-	//if err := cfs.db.QueryRow(`SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`,
-	//	parentID, name).Scan(&id); err != nil {
-	var inode string
-	const sql = `SELECT inode FROM fs.inode WHERE id = 
-(SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2))`
-	if err := cfs.db.QueryRow(sql, parentID, name).Scan(&inode); err != nil {
-		return "", err
-	}
-	return inode, nil
+func (cfs CFS) lookup(parentID uint64, name string) (*Node, error) {
+	return getInode(cfs.db, parentID, name)
 }
 
 // list returns the children of the node with id 'parentID'.
@@ -177,6 +165,98 @@ UPDATE fs.inode SET inode = $1 WHERE id = $2;
 		return err
 	}
 	return nil
+}
+
+// rename moves 'oldParentID/oldName' to 'newParentID/newName'.
+// If 'newParentID/newName' already exists, it is deleted.
+// See NOTE on node.go:Rename.
+// TODO(marc): this is getting a little gross. We should change this file to
+// be a bunch of methods that take a transaction.
+func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) error {
+	if oldParentID == newParentID && oldName == newName {
+		return nil
+	}
+
+	tx, err := cfs.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	// Lookup source inode.
+	srcObject, err := getInode(tx, oldParentID, oldName)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	// Lookup destination inode.
+	destObject, err := getInode(tx, newParentID, newName)
+	if err != nil && err != sql.ErrNoRows {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if destObject != nil {
+		// destination exists.
+		if srcObject.IsDir {
+			// srcObject is a directory.
+			if destObject.IsDir {
+				// Destination must be empty
+				count, err := countChildren(tx, destObject.ID)
+				if err != nil {
+					_ = tx.Rollback()
+					return err
+				}
+				if count != 0 {
+					_ = tx.Rollback()
+					return fuse.Errno(syscall.ENOTEMPTY)
+				}
+			} else {
+				// Destination is a file: not allowed.
+				_ = tx.Rollback()
+				return fuse.Errno(syscall.ENOTDIR)
+			}
+		} else {
+			// srcObject is a file.
+			if destObject.IsDir {
+				// source is a file, destination is a directory: not allowed.
+				_ = tx.Rollback()
+				return fuse.Errno(syscall.EISDIR)
+			}
+		}
+	}
+
+	// At this point we know the following:
+	// - srcObject is not nil
+	// - destObject may be nil. If not, its inode can be deleted.
+	if destObject == nil {
+		// No new object: use INSERT.
+		const insertSql = `
+DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
+INSERT INTO fs.namespace VALUES ($3, $4, $5);
+`
+		if _, err := tx.Exec(insertSql,
+			oldParentID, oldName,
+			newParentID, newName, srcObject.ID); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	} else {
+		// Destination exists.
+		const updateSql = `
+DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
+UPDATE fs.namespace SET id = $3 WHERE (parentID, name) = ($4, $5);
+DELETE FROM fs.inode WHERE id = $6;
+`
+		if _, err := tx.Exec(updateSql,
+			oldParentID, oldName,
+			srcObject.ID, newParentID, newName,
+			destObject.ID); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Root returns the filesystem's root node.

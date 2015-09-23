@@ -18,7 +18,9 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"syscall"
@@ -39,6 +41,7 @@ var _ fs.NodeRemover = &Node{}        // Remove
 var _ fs.HandleWriter = &Node{}       // Write
 var _ fs.HandleReader = &Node{}       // Read
 var _ fs.NodeFsyncer = &Node{}        // Fsync
+var _ fs.NodeRenamer = &Node{}        // Rename
 
 // TODO(marc): let's be conservative here. We can try bigger later.
 const maxSize = 1 << 20 // 1MB.
@@ -122,16 +125,11 @@ func (n Node) Lookup(_ context.Context, name string) (fs.Node, error) {
 	if !n.IsDir {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
-	raw, err := n.cfs.lookup(n.ID, name)
+	node, err := n.cfs.lookup(n.ID, name)
 	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
+		if err == sql.ErrNoRows {
 			return nil, fuse.ENOENT
 		}
-		return nil, err
-	}
-	node := &Node{}
-	if err := json.Unmarshal([]byte(raw), node); err != nil {
-		// TODO(marc): this defaults to EIO.
 		return nil, err
 	}
 	node.cfs = n.cfs
@@ -254,4 +252,22 @@ func (n *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadR
 // Fsync is a noop for us, we always push writes to the DB. We do need to implement it though.
 func (n Node) Fsync(_ context.Context, _ *fuse.FsyncRequest) error {
 	return nil
+}
+
+// Rename renames 'req.OldName' to 'req.NewName', optionally moving it to 'newDir'.
+// If req.NewName exists, it is deleted. It is assumed that it cannot be a directory.
+// NOTE: we do not keep track of opens, so we delete existing destinations right away.
+// This means that anyone holding an open file descriptor on the destination will fail
+// when trying to use it.
+// To properly handle this, we need to count references (including inode -> inode refs,
+// and open handles) and delete the inode only when it reaches zero.
+func (n Node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
+	newNode, ok := newDir.(*Node)
+	if !ok {
+		return fmt.Errorf("newDir is not a Node: %v", newDir)
+	}
+	if !n.IsDir || !newNode.IsDir {
+		return fuse.Errno(syscall.ENOTDIR)
+	}
+	return n.cfs.rename(n.ID, newNode.ID, req.OldName, req.NewName)
 }

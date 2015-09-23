@@ -19,8 +19,8 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
+	"syscall"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -79,7 +79,7 @@ func (n Node) Getattr(ctx context.Context, _ *fuse.GetattrRequest, resp *fuse.Ge
 // Lookup need not to handle the names "." and "..".
 func (n Node) Lookup(_ context.Context, name string) (fs.Node, error) {
 	if !n.IsDir {
-		panic(fmt.Sprintf("Lookup request called on file node: %+v", n))
+		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
 	raw, err := n.cfs.lookup(n.ID, name)
 	if err != nil {
@@ -100,7 +100,7 @@ func (n Node) Lookup(_ context.Context, name string) (fs.Node, error) {
 // ReadDirAll returns the list of child inodes.
 func (n Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
 	if !n.IsDir {
-		panic(fmt.Sprintf("ReadDirAll request called on file node: %+v", n))
+		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
 	return n.cfs.list(n.ID)
 }
@@ -110,10 +110,10 @@ func (n Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
 // TODO(marc): better handling of errors.
 func (n Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	if !n.IsDir {
-		panic(fmt.Sprintf("Mkdir request called on file node: %+v. req: %+v", n, req))
+		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
 	if !req.Mode.IsDir() {
-		panic(fmt.Sprintf("Mkdir request with file, expected directory: %+v", req))
+		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
 
 	node := &Node{
@@ -134,10 +134,10 @@ func (n Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) 
 func (n Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (
 	fs.Node, fs.Handle, error) {
 	if !n.IsDir {
-		panic(fmt.Sprintf("Create request called on file node: %+v. req: %+v", n, req))
+		return nil, nil, fuse.Errno(syscall.ENOTDIR)
 	}
 	if req.Mode.IsDir() {
-		panic(fmt.Sprintf("Create request with directory, expected file: %+v", req))
+		return nil, nil, fuse.Errno(syscall.EISDIR)
 	}
 
 	node := &Node{
@@ -157,7 +157,7 @@ func (n Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.Crea
 // Remove may be unlink or rmdir.
 func (n Node) Remove(_ context.Context, req *fuse.RemoveRequest) error {
 	if !n.IsDir {
-		panic(fmt.Sprintf("Create request called on file node: %+v. req: %+v", n, req))
+		return fuse.Errno(syscall.ENOTDIR)
 	}
 
 	if req.Dir {

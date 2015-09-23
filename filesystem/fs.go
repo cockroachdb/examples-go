@@ -118,7 +118,7 @@ SELECT count(parentID) FROM fs.namespace WHERE parentID = $1`
 	// Delete all entries.
 	const sql = `
 DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
-DELETE from fs.inode WHERE id = $3;
+DELETE FROM fs.inode WHERE id = $3;
 `
 	if _, err := tx.Exec(sql, parentID, name, id); err != nil {
 		_ = tx.Rollback()

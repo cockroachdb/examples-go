@@ -51,9 +51,9 @@ func getInode(e sqlExecutor, parentID uint64, name string) (*Node, error) {
 // checkIsEmpty returns nil if 'id' has no children.
 func checkIsEmpty(e sqlExecutor, id uint64) error {
 	var count uint64
-	const countSql = `
+	const countSQL = `
 SELECT COUNT(parentID) FROM fs.namespace WHERE parentID = $1`
-	if err := e.QueryRow(countSql, id).Scan(&count); err != nil {
+	if err := e.QueryRow(countSQL, id).Scan(&count); err != nil {
 		return err
 	}
 	if count != 0 {

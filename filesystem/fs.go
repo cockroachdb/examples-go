@@ -59,7 +59,7 @@ func (cfs CFS) initSchema() error {
 }
 
 // create inserts a new node. If node.ID is zero, an id is automatically generated.
-func (cfs CFS) create(parentID uint64, node Node) error {
+func (cfs CFS) create(parentID uint64, node *Node) error {
 	if node.ID == 0 {
 		if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&node.ID); err != nil {
 			return err
@@ -90,11 +90,11 @@ func (cfs CFS) remove(parentID uint64, name string, checkChildren bool) error {
 	}
 
 	// Start by looking up the node ID.
-	const lookupSql = `
+	const lookupSQL = `
 SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
 
 	var id uint64
-	if err := tx.QueryRow(lookupSql, parentID, name).Scan(&id); err != nil {
+	if err := tx.QueryRow(lookupSQL, parentID, name).Scan(&id); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -151,7 +151,7 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 }
 
 // update writes the updated value of 'node'.
-func (cfs CFS) update(node Node) error {
+func (cfs CFS) update(node *Node) error {
 	inode := node.toJSON()
 	const sql = `
 UPDATE fs.inode SET inode = $1 WHERE id = $2;
@@ -175,10 +175,9 @@ func validateRename(tx *sql.Tx, source, destination *Node) error {
 		if destination.IsDir {
 			// Both are directories: destination must be empty
 			return checkIsEmpty(tx, destination.ID)
-		} else {
-			// directory -> file: not allowed.
-			return fuse.Errno(syscall.ENOTDIR)
 		}
+		// directory -> file: not allowed.
+		return fuse.Errno(syscall.ENOTDIR)
 	}
 
 	// Source is a file.
@@ -227,11 +226,11 @@ func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) 
 	// - destObject may be nil. If not, its inode can be deleted.
 	if destObject == nil {
 		// No new object: use INSERT.
-		const insertSql = `
+		const insertSQL = `
 DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
 INSERT INTO fs.namespace VALUES ($3, $4, $5);
 `
-		if _, err := tx.Exec(insertSql,
+		if _, err := tx.Exec(insertSQL,
 			oldParentID, oldName,
 			newParentID, newName, srcObject.ID); err != nil {
 			_ = tx.Rollback()
@@ -239,12 +238,12 @@ INSERT INTO fs.namespace VALUES ($3, $4, $5);
 		}
 	} else {
 		// Destination exists.
-		const updateSql = `
+		const updateSQL = `
 DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
 UPDATE fs.namespace SET id = $3 WHERE (parentID, name) = ($4, $5);
 DELETE FROM fs.inode WHERE id = $6;
 `
-		if _, err := tx.Exec(updateSql,
+		if _, err := tx.Exec(updateSQL,
 			oldParentID, oldName,
 			srcObject.ID, newParentID, newName,
 			destObject.ID); err != nil {

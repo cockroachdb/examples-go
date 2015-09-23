@@ -91,10 +91,10 @@ func main() {
 
 	{
 		// For testing only.
-		if err := cfs.create(rootNodeID, Node{Name: "myfile", IsDir: false}); err != nil {
+		if err := cfs.create(rootNodeID, &Node{Name: "myfile", IsDir: false}); err != nil {
 			log.Fatal(err)
 		}
-		if err := cfs.create(rootNodeID, Node{Name: "mydir", IsDir: true}); err != nil {
+		if err := cfs.create(rootNodeID, &Node{Name: "mydir", IsDir: true}); err != nil {
 			log.Fatal(err)
 		}
 		results, err := cfs.list(0)
@@ -115,13 +115,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer c.Close()
+	defer func() {
+		_ = c.Close()
+	}()
 
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt)
 		<-sig
-		fuse.Unmount(mountpoint)
+		_ = fuse.Unmount(mountpoint)
 	}()
 
 	// Serve root.

@@ -101,14 +101,9 @@ SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
 
 	// Check if there are any children.
 	if checkChildren {
-		count, err := countChildren(tx, id)
-		if err != nil {
+		if err := checkIsEmpty(tx, id); err != nil {
 			_ = tx.Rollback()
 			return err
-		}
-		if count != 0 {
-			_ = tx.Rollback()
-			return fuse.Errno(syscall.ENOTEMPTY)
 		}
 	}
 
@@ -167,11 +162,36 @@ UPDATE fs.inode SET inode = $1 WHERE id = $2;
 	return nil
 }
 
+// validateRename takes a source and destination node and verifies that
+// a rename can be performed from source to destination.
+// source must not be nil. destination can be.
+func validateRename(tx *sql.Tx, source, destination *Node) error {
+	if destination == nil {
+		// No object at destination: good.
+		return nil
+	}
+
+	if source.IsDir {
+		if destination.IsDir {
+			// Both are directories: destination must be empty
+			return checkIsEmpty(tx, destination.ID)
+		} else {
+			// directory -> file: not allowed.
+			return fuse.Errno(syscall.ENOTDIR)
+		}
+	}
+
+	// Source is a file.
+	if destination.IsDir {
+		// file -> directory: not allowed.
+		return fuse.Errno(syscall.EISDIR)
+	}
+	return nil
+}
+
 // rename moves 'oldParentID/oldName' to 'newParentID/newName'.
 // If 'newParentID/newName' already exists, it is deleted.
 // See NOTE on node.go:Rename.
-// TODO(marc): this is getting a little gross. We should change this file to
-// be a bunch of methods that take a transaction.
 func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) error {
 	if oldParentID == newParentID && oldName == newName {
 		return nil
@@ -196,34 +216,10 @@ func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) 
 		return err
 	}
 
-	if destObject != nil {
-		// destination exists.
-		if srcObject.IsDir {
-			// srcObject is a directory.
-			if destObject.IsDir {
-				// Destination must be empty
-				count, err := countChildren(tx, destObject.ID)
-				if err != nil {
-					_ = tx.Rollback()
-					return err
-				}
-				if count != 0 {
-					_ = tx.Rollback()
-					return fuse.Errno(syscall.ENOTEMPTY)
-				}
-			} else {
-				// Destination is a file: not allowed.
-				_ = tx.Rollback()
-				return fuse.Errno(syscall.ENOTDIR)
-			}
-		} else {
-			// srcObject is a file.
-			if destObject.IsDir {
-				// source is a file, destination is a directory: not allowed.
-				_ = tx.Rollback()
-				return fuse.Errno(syscall.EISDIR)
-			}
-		}
+	// Check that the rename is allowed.
+	if err := validateRename(tx, srcObject, destObject); err != nil {
+		_ = tx.Rollback()
+		return err
 	}
 
 	// At this point we know the following:

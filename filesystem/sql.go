@@ -20,6 +20,9 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"syscall"
+
+	"bazil.org/fuse"
 )
 
 // sqlExecutor is an interface needed for basic queries.
@@ -45,10 +48,16 @@ func getInode(e sqlExecutor, parentID uint64, name string) (*Node, error) {
 	return node, err
 }
 
-// countChildren returns the number of children of inode with 'id'.
-func countChildren(e sqlExecutor, id uint64) (count uint64, err error) {
+// checkIsEmpty returns nil if 'id' has no children.
+func checkIsEmpty(e sqlExecutor, id uint64) error {
+	var count uint64
 	const countSql = `
 SELECT COUNT(parentID) FROM fs.namespace WHERE parentID = $1`
-	err = e.QueryRow(countSql, id).Scan(&count)
-	return
+	if err := e.QueryRow(countSql, id).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return fuse.Errno(syscall.ENOTEMPTY)
+	}
+	return nil
 }

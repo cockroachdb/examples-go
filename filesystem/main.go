@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -93,6 +94,13 @@ func main() {
 		log.Fatal(err)
 	}
 	defer c.Close()
+
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt)
+		<-sig
+		fuse.Unmount(mountpoint)
+	}()
 
 	// Serve root.
 	err = fs.Serve(c, cfs)

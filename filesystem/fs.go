@@ -24,6 +24,8 @@ import (
 	"bazil.org/fuse/fs"
 )
 
+const rootNodeID = 1
+
 const (
 	fsSchema = `
 CREATE DATABASE fs;
@@ -42,11 +44,8 @@ CREATE TABLE fs.inode (
 `
 )
 
-// Root
-var _ fs.FS = &CFS{}
-
-// GenerateInode
-var _ fs.FSInodeGenerator = &CFS{}
+var _ fs.FS = &CFS{}               // Root
+var _ fs.FSInodeGenerator = &CFS{} // GenerateInode
 
 // CFS implements a filesystem on top of cockroach.
 type CFS struct {
@@ -58,6 +57,7 @@ func (cfs CFS) initSchema() error {
 	return err
 }
 
+// create inserts a new node. If node.ID is zero, an id is automatically generated.
 func (cfs CFS) create(parentID uint64, node Node) error {
 	if node.ID == 0 {
 		if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&node.ID); err != nil {
@@ -122,14 +122,17 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 
 // Root returns the filesystem's root node.
 func (cfs CFS) Root() (fs.Node, error) {
-	return &Node{cfs: cfs, Name: "", ID: 1, IsDir: true}, nil
+	return &Node{cfs: cfs, Name: "", ID: rootNodeID, IsDir: true}, nil
 }
 
 // GenerateInode returns a new inode ID.
 func (cfs CFS) GenerateInode(parentInode uint64, name string) uint64 {
-	var id uint64
+	return cfs.newUniqueID()
+}
+
+func (cfs CFS) newUniqueID() (id uint64) {
 	if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
 		panic(err)
 	}
-	return id
+	return
 }

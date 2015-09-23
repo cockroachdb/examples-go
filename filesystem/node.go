@@ -26,17 +26,10 @@ import (
 	"golang.org/x/net/context"
 )
 
-// Attr
-var _ fs.Node = &Node{}
-
-// Lookup
-var _ fs.NodeStringLookuper = &Node{}
-
-// HandleReadDirAller
-var _ fs.HandleReadDirAller = &Node{}
-
-// Mkdir
-var _ fs.NodeMkdirer = &Node{}
+var _ fs.Node = &Node{}               // Attr
+var _ fs.NodeStringLookuper = &Node{} // Lookup
+var _ fs.HandleReadDirAller = &Node{} // HandleReadDirAller
+var _ fs.NodeMkdirer = &Node{}        // Mkdir
 
 // Node implements the Node interface.
 type Node struct {
@@ -61,6 +54,7 @@ func (n Node) toJSON() string {
 
 // Attr fills attr with the standard metadata for the node.
 func (n Node) Attr(ctx context.Context, a *fuse.Attr) error {
+	a.Inode = n.ID
 	if n.IsDir {
 		a.Mode = os.ModeDir | 0755
 	} else {
@@ -111,6 +105,7 @@ func (n Node) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 func (n Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	node := &Node{
 		cfs:   n.cfs,
+		ID:    n.cfs.newUniqueID(),
 		Name:  req.Name,
 		IsDir: true,
 	}

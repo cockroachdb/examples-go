@@ -122,8 +122,13 @@ func main() {
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt)
-		<-sig
-		_ = fuse.Unmount(mountpoint)
+		for _ = range sig {
+			if err := fuse.Unmount(mountpoint); err != nil {
+				log.Printf("Signal received, but could not unmount: %s", err)
+			} else {
+				break
+			}
+		}
 	}()
 
 	// Serve root.

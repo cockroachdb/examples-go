@@ -19,6 +19,7 @@ package main
 
 import (
 	"database/sql"
+	"syscall"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -80,13 +81,59 @@ INSERT INTO fs.namespace VALUES ($3, $4, $1);
 	return tx.Commit()
 }
 
+// remove removes a node give its name and its parent ID.
+// If 'checkChildren' is true, fails if the node has children.
+func (cfs CFS) remove(parentID uint64, name string, checkChildren bool) error {
+	tx, err := cfs.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	// Start by looking up the node ID.
+	const lookupSql = `
+SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
+
+	var id uint64
+	if err := tx.QueryRow(lookupSql, parentID, name).Scan(&id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	// Check if there are any children.
+	if checkChildren {
+		const countSql = `
+SELECT count(parentID) FROM fs.namespace WHERE parentID = $1`
+
+		var count uint64
+		if err := tx.QueryRow(countSql, id).Scan(&count); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if count != 0 {
+			_ = tx.Rollback()
+			return fuse.Errno(syscall.ENOTEMPTY)
+		}
+	}
+
+	// Delete all entries.
+	const sql = `
+DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
+DELETE from fs.inode WHERE id = $3;
+`
+	if _, err := tx.Exec(sql, parentID, name, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func (cfs CFS) lookup(parentID uint64, name string) (string, error) {
 	// TODO(pmattis): investigate: "unable to encode table key: parser.DTuple" and restore:
 	//if err := cfs.db.QueryRow(`SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`,
 	//	parentID, name).Scan(&id); err != nil {
 	var inode string
 	const sql = `SELECT inode FROM fs.inode WHERE id = 
-(SELECT id FROM fs.namespace WHERE (parentID, name) IN (($1, $2)))`
+(SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2))`
 	if err := cfs.db.QueryRow(sql, parentID, name).Scan(&inode); err != nil {
 		return "", err
 	}

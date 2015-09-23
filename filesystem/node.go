@@ -19,6 +19,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"bazil.org/fuse"
@@ -30,6 +31,8 @@ var _ fs.Node = &Node{}               // Attr
 var _ fs.NodeStringLookuper = &Node{} // Lookup
 var _ fs.HandleReadDirAller = &Node{} // HandleReadDirAller
 var _ fs.NodeMkdirer = &Node{}        // Mkdir
+var _ fs.NodeCreater = &Node{}        // Create
+var _ fs.NodeRemover = &Node{}        // Remove
 
 // Node implements the Node interface.
 type Node struct {
@@ -53,7 +56,7 @@ func (n Node) toJSON() string {
 }
 
 // Attr fills attr with the standard metadata for the node.
-func (n Node) Attr(ctx context.Context, a *fuse.Attr) error {
+func (n Node) Attr(_ context.Context, a *fuse.Attr) error {
 	a.Inode = n.ID
 	if n.IsDir {
 		a.Mode = os.ModeDir | 0755
@@ -74,9 +77,9 @@ func (n Node) Getattr(ctx context.Context, _ *fuse.GetattrRequest, resp *fuse.Ge
 // the directory, Lookup should return ENOENT.
 //
 // Lookup need not to handle the names "." and "..".
-func (n Node) Lookup(ctx context.Context, name string) (fs.Node, error) {
+func (n Node) Lookup(_ context.Context, name string) (fs.Node, error) {
 	if !n.IsDir {
-		return nil, fuse.ENOSYS
+		panic(fmt.Sprintf("Lookup request called on file node: %+v", n))
 	}
 	raw, err := n.cfs.lookup(n.ID, name)
 	if err != nil {
@@ -95,14 +98,24 @@ func (n Node) Lookup(ctx context.Context, name string) (fs.Node, error) {
 }
 
 // ReadDirAll returns the list of child inodes.
-func (n Node) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+func (n Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
+	if !n.IsDir {
+		panic(fmt.Sprintf("ReadDirAll request called on file node: %+v", n))
+	}
 	return n.cfs.list(n.ID)
 }
 
 // Mkdir creates a directory in 'n'.
 // We let the sql query fail if the directory already exists.
 // TODO(marc): better handling of errors.
-func (n Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+func (n Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+	if !n.IsDir {
+		panic(fmt.Sprintf("Mkdir request called on file node: %+v. req: %+v", n, req))
+	}
+	if !req.Mode.IsDir() {
+		panic(fmt.Sprintf("Mkdir request with file, expected directory: %+v", req))
+	}
+
 	node := &Node{
 		cfs:   n.cfs,
 		ID:    n.cfs.newUniqueID(),
@@ -115,4 +128,42 @@ func (n Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error
 		return nil, err
 	}
 	return node, nil
+}
+
+// Create creates a new file in the receiver directory.
+func (n Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (
+	fs.Node, fs.Handle, error) {
+	if !n.IsDir {
+		panic(fmt.Sprintf("Create request called on file node: %+v. req: %+v", n, req))
+	}
+	if req.Mode.IsDir() {
+		panic(fmt.Sprintf("Create request with directory, expected file: %+v", req))
+	}
+
+	node := &Node{
+		cfs:   n.cfs,
+		ID:    n.cfs.newUniqueID(),
+		Name:  req.Name,
+		IsDir: false,
+	}
+
+	err := n.cfs.create(n.ID, *node)
+	if err != nil {
+		return nil, nil, err
+	}
+	return node, node, nil
+}
+
+// Remove may be unlink or rmdir.
+func (n Node) Remove(_ context.Context, req *fuse.RemoveRequest) error {
+	if !n.IsDir {
+		panic(fmt.Sprintf("Create request called on file node: %+v. req: %+v", n, req))
+	}
+
+	if req.Dir {
+		// Rmdir.
+		return n.cfs.remove(n.ID, req.Name, true /* checkChildren */)
+	}
+	// Unlink.
+	return n.cfs.remove(n.ID, req.Name, false /* !checkChildren */)
 }

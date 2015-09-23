@@ -15,6 +15,28 @@
 //
 // Author: Marc Berhault (marc@cockroachlabs.com)
 
+// This is a simple fuse filesystem that stores all metadata and data
+// in cockroach.
+//
+// Inode relationships are stored in the namespace table, and inodes
+// themselves in the inode table.
+//
+// Basic functionality is implemented, including:
+// - mk/rm directory
+// - create/rm files
+// - read/write files
+// - rename
+//
+// One caveat of the implemented features is that handles are not
+// reference counted so if an inode is deleted, all open file descriptors
+// pointing to it become invalid.
+//
+// Some TODOs (definitely not a comprehensive list):
+// - support basic attributes (mode, timestamps)
+// - support other types: symlinks, hard links
+// - add ref counting (and handle open/release)
+// - store data outside the inode (eg: separate data table)
+
 package main
 
 import (

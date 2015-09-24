@@ -61,7 +61,7 @@ type Node struct {
 }
 
 // toJSON returns the json-encoded string for this node.
-func (n Node) toJSON() string {
+func (n *Node) toJSON() string {
 	ret, err := json.Marshal(n)
 	if err != nil {
 		panic(err)
@@ -70,7 +70,7 @@ func (n Node) toJSON() string {
 }
 
 // Attr fills attr with the standard metadata for the node.
-func (n Node) Attr(_ context.Context, a *fuse.Attr) error {
+func (n *Node) Attr(_ context.Context, a *fuse.Attr) error {
 	a.Inode = n.ID
 	if n.IsDir {
 		a.Mode = os.ModeDir | 0755
@@ -81,10 +81,6 @@ func (n Node) Attr(_ context.Context, a *fuse.Attr) error {
 		a.Size = uint64(len(n.Data))
 	}
 	return nil
-}
-
-func (n Node) Getattr(ctx context.Context, _ *fuse.GetattrRequest, resp *fuse.GetattrResponse) error {
-	return n.Attr(ctx, &resp.Attr)
 }
 
 // Setattr modifies node metadata. This includes changing the size.
@@ -112,7 +108,7 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 
 	// TODO(marc): check that fuse forgets the node on errors, otherwise
 	// we'll have updated data in memory but not committed it.
-	return n.cfs.update(*n)
+	return n.cfs.update(n)
 }
 
 // Lookup looks up a specific entry in the receiver,
@@ -121,7 +117,7 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 // the directory, Lookup should return ENOENT.
 //
 // Lookup need not to handle the names "." and "..".
-func (n Node) Lookup(_ context.Context, name string) (fs.Node, error) {
+func (n *Node) Lookup(_ context.Context, name string) (fs.Node, error) {
 	if !n.IsDir {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
@@ -137,7 +133,7 @@ func (n Node) Lookup(_ context.Context, name string) (fs.Node, error) {
 }
 
 // ReadDirAll returns the list of child inodes.
-func (n Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
+func (n *Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
 	if !n.IsDir {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
@@ -147,7 +143,7 @@ func (n Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
 // Mkdir creates a directory in 'n'.
 // We let the sql query fail if the directory already exists.
 // TODO(marc): better handling of errors.
-func (n Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+func (n *Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	if !n.IsDir {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
@@ -162,7 +158,7 @@ func (n Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) 
 		IsDir: true,
 	}
 
-	err := n.cfs.create(n.ID, *node)
+	err := n.cfs.create(n.ID, node)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +166,7 @@ func (n Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) 
 }
 
 // Create creates a new file in the receiver directory.
-func (n Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (
+func (n *Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (
 	fs.Node, fs.Handle, error) {
 	if !n.IsDir {
 		return nil, nil, fuse.Errno(syscall.ENOTDIR)
@@ -186,7 +182,7 @@ func (n Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.Crea
 		IsDir: false,
 	}
 
-	err := n.cfs.create(n.ID, *node)
+	err := n.cfs.create(n.ID, node)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -194,7 +190,7 @@ func (n Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.Crea
 }
 
 // Remove may be unlink or rmdir.
-func (n Node) Remove(_ context.Context, req *fuse.RemoveRequest) error {
+func (n *Node) Remove(_ context.Context, req *fuse.RemoveRequest) error {
 	if !n.IsDir {
 		return fuse.Errno(syscall.ENOTDIR)
 	}
@@ -229,7 +225,7 @@ func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.Write
 	written := copy(n.Data[req.Offset:], req.Data)
 	// TODO(marc): check that fuse forgets the node on errors, otherwise
 	// we'll have updated data in memory but not committed it.
-	if err := n.cfs.update(*n); err != nil {
+	if err := n.cfs.update(n); err != nil {
 		return err
 	}
 	resp.Size = written
@@ -250,7 +246,7 @@ func (n *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadR
 }
 
 // Fsync is a noop for us, we always push writes to the DB. We do need to implement it though.
-func (n Node) Fsync(_ context.Context, _ *fuse.FsyncRequest) error {
+func (n *Node) Fsync(_ context.Context, _ *fuse.FsyncRequest) error {
 	return nil
 }
 
@@ -261,7 +257,7 @@ func (n Node) Fsync(_ context.Context, _ *fuse.FsyncRequest) error {
 // when trying to use it.
 // To properly handle this, we need to count references (including inode -> inode refs,
 // and open handles) and delete the inode only when it reaches zero.
-func (n Node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
+func (n *Node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
 	newNode, ok := newDir.(*Node)
 	if !ok {
 		return fmt.Errorf("newDir is not a Node: %v", newDir)

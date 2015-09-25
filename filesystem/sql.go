@@ -61,3 +61,77 @@ SELECT COUNT(parentID) FROM fs.namespace WHERE parentID = $1`
 	}
 	return nil
 }
+
+// updateNode updates an existing node descriptor.
+func updateNode(e sqlExecutor, node *Node) error {
+	inode := node.toJSON()
+	const sql = `
+UPDATE fs.inode SET inode = $1 WHERE id = $2;
+`
+	if _, err := e.Exec(sql, inode, node.ID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// getBlockData returns the block data for a single block.
+func getBlockData(e sqlExecutor, inodeID uint64, block int) ([]byte, error) {
+	var data []byte
+	const sql = `SELECT data FROM fs.block WHERE id = $1 AND block = $2`
+	if err := e.QueryRow(sql, inodeID, block).Scan(&data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// updateBlockData overwrites the data for a single block.
+func updateBlockData(e sqlExecutor, inodeID uint64, block int, data []byte) error {
+	const sql = `UPDATE fs.block SET data = $1 WHERE (id, block) = ($2, $3)`
+	if _, err := e.Exec(sql, data, inodeID, block); err != nil {
+		return err
+	}
+	return nil
+}
+
+type blockInfo struct {
+	block int
+	data  []byte
+}
+
+// getBlocks fetches all the blocks for a given inode and returns
+// a list of blockInfo objects.
+func getBlocks(e sqlExecutor, inodeID uint64) ([]blockInfo, error) {
+	stmt := `SELECT block, data FROM fs.block WHERE id = $1`
+	rows, err := e.Query(stmt, inodeID)
+	if err != nil {
+		return nil, err
+	}
+	return buildBlockInfos(rows)
+}
+
+// getBlocksBetween fetches blocks with IDs [start, end] for a given inode
+// and returns a list of blockInfo objects.
+func getBlocksBetween(e sqlExecutor, inodeID uint64, start, end int) ([]blockInfo, error) {
+	stmt := `SELECT block, data FROM fs.block WHERE id = $1 AND block >= $2 AND block <= $3`
+	rows, err := e.Query(stmt, inodeID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return buildBlockInfos(rows)
+}
+
+func buildBlockInfos(rows *sql.Rows) ([]blockInfo, error) {
+	var results []blockInfo
+	for rows.Next() {
+		b := blockInfo{}
+		if err := rows.Scan(&b.block, &b.data); err != nil {
+			return nil, err
+		}
+		results = append(results, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}

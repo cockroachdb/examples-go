@@ -18,14 +18,22 @@
 // This is a simple fuse filesystem that stores all metadata and data
 // in cockroach.
 //
-// Inode relationships are stored in the namespace table, and inodes
-// themselves in the inode table.
+// Inode relationships are stored in the `namespace` table, and inodes
+// themselves in the `inode` table.
+//
+// Data blocks are stored in the `block` table, indexed by inode ID
+// and block number.
 //
 // Basic functionality is implemented, including:
 // - mk/rm directory
 // - create/rm files
 // - read/write files
 // - rename
+//
+// WARNING: concurrent access on a single mount is fine. However,
+// behavior is undefined (read broken) when mounted more than once at the
+// same time. Specifically, read/writes will not be seen right away and
+// may work on out of date information.
 //
 // One caveat of the implemented features is that handles are not
 // reference counted so if an inode is deleted, all open file descriptors
@@ -35,7 +43,8 @@
 // - support basic attributes (mode, timestamps)
 // - support other types: symlinks, hard links
 // - add ref counting (and handle open/release)
-// - store data outside the inode (eg: separate data table)
+// - sparse files: don't store empty blocks
+// - sparse files 2: keep track of holes
 
 package main
 
@@ -82,19 +91,19 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// defer db.Close()
+	defer func() { _ = db.Close() }()
 
-	cfs := CFS{db}
-	if err := cfs.initSchema(); err != nil {
+	if err := initSchema(db); err != nil {
 		log.Fatal(err)
 	}
 
+	cfs := CFS{db}
 	{
 		// For testing only.
-		if err := cfs.create(rootNodeID, &Node{Name: "myfile", IsDir: false}); err != nil {
+		if err := cfs.create(rootNodeID, "myfile", cfs.newFileNode()); err != nil {
 			log.Fatal(err)
 		}
-		if err := cfs.create(rootNodeID, &Node{Name: "mydir", IsDir: true}); err != nil {
+		if err := cfs.create(rootNodeID, "mydir", cfs.newDirNode()); err != nil {
 			log.Fatal(err)
 		}
 		results, err := cfs.list(0)
@@ -122,7 +131,7 @@ func main() {
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt)
-		for _ = range sig {
+		for range sig {
 			if err := fuse.Unmount(mountpoint); err != nil {
 				log.Printf("Signal received, but could not unmount: %s", err)
 			} else {

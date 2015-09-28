@@ -19,6 +19,7 @@ package main
 
 import (
 	"database/sql"
+	"os"
 	"syscall"
 
 	"bazil.org/fuse"
@@ -42,6 +43,13 @@ CREATE TABLE fs.inode (
   id    INT PRIMARY KEY,
   inode STRING
 );
+
+CREATE TABLE fs.block (
+  id    INT,
+  block INT,
+  data  BYTES,
+  PRIMARY KEY (id, block)
+);
 `
 )
 
@@ -53,18 +61,16 @@ type CFS struct {
 	db *sql.DB
 }
 
-func (cfs CFS) initSchema() error {
-	_, err := cfs.db.Exec(fsSchema)
+func initSchema(db *sql.DB) error {
+	_, err := db.Exec(fsSchema)
 	return err
 }
 
-// create inserts a new node. If node.ID is zero, an id is automatically generated.
-func (cfs CFS) create(parentID uint64, node *Node) error {
-	if node.ID == 0 {
-		if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&node.ID); err != nil {
-			return err
-		}
-	}
+// create inserts a new node.
+// parentID: inode ID of the parent directory.
+// name: name of the new node
+// node: new node
+func (cfs CFS) create(parentID uint64, name string, node *Node) error {
 	inode := node.toJSON()
 	tx, err := cfs.db.Begin()
 	if err != nil {
@@ -74,7 +80,7 @@ func (cfs CFS) create(parentID uint64, node *Node) error {
 INSERT INTO fs.inode VALUES ($1, $2);
 INSERT INTO fs.namespace VALUES ($3, $4, $1);
 `
-	if _, err := tx.Exec(sql, node.ID, inode, parentID, node.Name); err != nil {
+	if _, err := tx.Exec(sql, node.ID, inode, parentID, name); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -111,6 +117,7 @@ SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
 	const sql = `
 DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
 DELETE FROM fs.inode WHERE id = $3;
+DELETE FROM fs.block WHERE id = $3;
 `
 	if _, err := tx.Exec(sql, parentID, name, id); err != nil {
 		_ = tx.Rollback()
@@ -136,8 +143,8 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 	}
 
 	var results []fuse.Dirent
-	dirent := fuse.Dirent{Type: fuse.DT_Unknown}
 	for rows.Next() {
+		dirent := fuse.Dirent{Type: fuse.DT_Unknown}
 		if err := rows.Scan(&dirent.Name, &dirent.Inode); err != nil {
 			return nil, err
 		}
@@ -150,18 +157,6 @@ func (cfs CFS) list(parentID uint64) ([]fuse.Dirent, error) {
 	return results, nil
 }
 
-// update writes the updated value of 'node'.
-func (cfs CFS) update(node *Node) error {
-	inode := node.toJSON()
-	const sql = `
-UPDATE fs.inode SET inode = $1 WHERE id = $2;
-`
-	if _, err := cfs.db.Exec(sql, inode, node.ID); err != nil {
-		return err
-	}
-	return nil
-}
-
 // validateRename takes a source and destination node and verifies that
 // a rename can be performed from source to destination.
 // source must not be nil. destination can be.
@@ -171,8 +166,8 @@ func validateRename(tx *sql.Tx, source, destination *Node) error {
 		return nil
 	}
 
-	if source.IsDir {
-		if destination.IsDir {
+	if source.Mode.IsDir() {
+		if destination.Mode.IsDir() {
 			// Both are directories: destination must be empty
 			return checkIsEmpty(tx, destination.ID)
 		}
@@ -181,7 +176,7 @@ func validateRename(tx *sql.Tx, source, destination *Node) error {
 	}
 
 	// Source is a file.
-	if destination.IsDir {
+	if destination.Mode.IsDir() {
 		// file -> directory: not allowed.
 		return fuse.Errno(syscall.EISDIR)
 	}
@@ -255,8 +250,9 @@ DELETE FROM fs.inode WHERE id = $6;
 }
 
 // Root returns the filesystem's root node.
+// This node is special: it has a fixed ID and is not persisted.
 func (cfs CFS) Root() (fs.Node, error) {
-	return &Node{cfs: cfs, Name: "", ID: rootNodeID, IsDir: true}, nil
+	return &Node{cfs: cfs, ID: rootNodeID, Mode: os.ModeDir | defaultPerms}, nil
 }
 
 // GenerateInode returns a new inode ID.
@@ -269,4 +265,22 @@ func (cfs CFS) newUniqueID() (id uint64) {
 		panic(err)
 	}
 	return
+}
+
+// newFileNode returns a new node struct corresponding to a file.
+func (cfs CFS) newFileNode() *Node {
+	return &Node{
+		cfs:  cfs,
+		ID:   cfs.newUniqueID(),
+		Mode: defaultPerms,
+	}
+}
+
+// newDirNode returns a new node struct corresponding to a directory.
+func (cfs CFS) newDirNode() *Node {
+	return &Node{
+		cfs:  cfs,
+		ID:   cfs.newUniqueID(),
+		Mode: os.ModeDir | defaultPerms,
+	}
 }

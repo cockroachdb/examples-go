@@ -21,13 +21,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 	"syscall"
 
+	"github.com/cockroachdb/cockroach/util/log"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"bazil.org/fuse/fuseutil"
 	"golang.org/x/net/context"
 )
 
@@ -43,21 +45,36 @@ var _ fs.HandleReader = &Node{}       // Read
 var _ fs.NodeFsyncer = &Node{}        // Fsync
 var _ fs.NodeRenamer = &Node{}        // Rename
 
-// TODO(marc): let's be conservative here. We can try bigger later.
-const maxSize = 1 << 20 // 1MB.
+// Default permissions: we don't have any right now.
+const defaultPerms = 0755
+
+// Maximum file size.
+const maxSize = math.MaxUint64
 
 // Node implements the Node interface.
 type Node struct {
 	cfs CFS
 	// These fields are immutable after node creation.
-	Name string
-	ID   uint64
-	// TODO(marc): switch to enum for other types.
-	IsDir bool
+	ID uint64
+	// Used for type only, permissions are ignored.
+	Mode os.FileMode
 
-	// For files only.
+	// Other fields to add:
+	// nLinks: number of hard links
+	// openFDs: number of open file descriptors
+	// fastLink: path for symlink target
+	// timestamps (probably just ctime and mtime)
+
+	// Implicit fields:
+	// numBlocks: number of 512b blocks
+	// blocksize: preferred block size
+	// mode bits: permissions
+
+	// For regular files only.
+	// Data blocks are addressed by inode number and offset.
+	// Any op accessing Size and blocks must lock 'mu'.
 	mu   sync.RWMutex
-	Data []byte
+	Size uint64
 }
 
 // toJSON returns the json-encoded string for this node.
@@ -72,43 +89,82 @@ func (n *Node) toJSON() string {
 // Attr fills attr with the standard metadata for the node.
 func (n *Node) Attr(_ context.Context, a *fuse.Attr) error {
 	a.Inode = n.ID
-	if n.IsDir {
-		a.Mode = os.ModeDir | 0755
-	} else {
+	a.Mode = n.Mode
+	// Does preferred block size make sense on things other
+	// than regular files?
+	a.BlockSize = BlockSize
+
+	if n.Mode.IsRegular() {
 		n.mu.RLock()
 		defer n.mu.RUnlock()
-		a.Mode = 0644
-		a.Size = uint64(len(n.Data))
+		a.Size = n.Size
+
+		// Blocks is the number of 512 byte blocks, regardless of
+		// filesystem blocksize.
+		a.Blocks = (n.Size + 511) / 512
 	}
 	return nil
 }
 
 // Setattr modifies node metadata. This includes changing the size.
 func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	if req.Valid.Size() {
-		if n.IsDir {
-			return fuse.Errno(syscall.EISDIR)
-		}
-		if req.Size > maxSize {
-			return fuse.Errno(syscall.EFBIG)
-		}
-		l := uint64(len(n.Data))
-		if req.Size > l {
-			n.Data = append(n.Data, make([]byte, req.Size-l)...)
-		} else {
-			n.Data = n.Data[:req.Size]
-		}
-	} else {
-		// TODO(marc): handle other attributes.
+	if !req.Valid.Size() {
+		// We can exit early since only setting the size is implemented.
 		return nil
 	}
 
-	// TODO(marc): check that fuse forgets the node on errors, otherwise
-	// we'll have updated data in memory but not committed it.
-	return n.cfs.update(n)
+	if !n.Mode.IsRegular() {
+		// Setting the size is only available on regular files.
+		return fuse.Errno(syscall.EINVAL)
+	}
+
+	if req.Size > maxSize {
+		// Too big.
+		return fuse.Errno(syscall.EFBIG)
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if req.Size == n.Size {
+		// Nothing to do.
+		return nil
+	}
+
+	// Wrap everything inside a transaction.
+	tx, err := n.cfs.db.Begin()
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+
+	// Resize blocks as needed.
+	if err := resizeBlocks(tx, n.ID, n.Size, req.Size); err != nil {
+		log.Error(err)
+		_ = tx.Rollback()
+		return err
+	}
+
+	// Update this node descriptor. Store the current size in case
+	// we need to rollback.
+	originalSize := n.Size
+	n.Size = req.Size
+	if err := updateNode(tx, n); err != nil {
+		log.Error(err)
+		_ = tx.Rollback()
+		// reset our size.
+		n.Size = originalSize
+		return err
+	}
+
+	// All set: commit.
+	if err := tx.Commit(); err != nil {
+		// Reset our size.
+		log.Error(err)
+		n.Size = originalSize
+		return err
+	}
+	return nil
 }
 
 // Lookup looks up a specific entry in the receiver,
@@ -118,7 +174,7 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 //
 // Lookup need not to handle the names "." and "..".
 func (n *Node) Lookup(_ context.Context, name string) (fs.Node, error) {
-	if !n.IsDir {
+	if !n.Mode.IsDir() {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
 	node, err := n.cfs.lookup(n.ID, name)
@@ -134,7 +190,7 @@ func (n *Node) Lookup(_ context.Context, name string) (fs.Node, error) {
 
 // ReadDirAll returns the list of child inodes.
 func (n *Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
-	if !n.IsDir {
+	if !n.Mode.IsDir() {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
 	return n.cfs.list(n.ID)
@@ -144,21 +200,15 @@ func (n *Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
 // We let the sql query fail if the directory already exists.
 // TODO(marc): better handling of errors.
 func (n *Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
-	if !n.IsDir {
+	if !n.Mode.IsDir() {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
 	if !req.Mode.IsDir() {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
 
-	node := &Node{
-		cfs:   n.cfs,
-		ID:    n.cfs.newUniqueID(),
-		Name:  req.Name,
-		IsDir: true,
-	}
-
-	err := n.cfs.create(n.ID, node)
+	node := n.cfs.newDirNode()
+	err := n.cfs.create(n.ID, req.Name, node)
 	if err != nil {
 		return nil, err
 	}
@@ -168,21 +218,17 @@ func (n *Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error)
 // Create creates a new file in the receiver directory.
 func (n *Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (
 	fs.Node, fs.Handle, error) {
-	if !n.IsDir {
+	if !n.Mode.IsDir() {
 		return nil, nil, fuse.Errno(syscall.ENOTDIR)
 	}
 	if req.Mode.IsDir() {
 		return nil, nil, fuse.Errno(syscall.EISDIR)
+	} else if !req.Mode.IsRegular() {
+		return nil, nil, fuse.Errno(syscall.EINVAL)
 	}
 
-	node := &Node{
-		cfs:   n.cfs,
-		ID:    n.cfs.newUniqueID(),
-		Name:  req.Name,
-		IsDir: false,
-	}
-
-	err := n.cfs.create(n.ID, node)
+	node := n.cfs.newFileNode()
+	err := n.cfs.create(n.ID, req.Name, node)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -191,7 +237,7 @@ func (n *Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.Cre
 
 // Remove may be unlink or rmdir.
 func (n *Node) Remove(_ context.Context, req *fuse.RemoveRequest) error {
-	if !n.IsDir {
+	if !n.Mode.IsDir() {
 		return fuse.Errno(syscall.ENOTDIR)
 	}
 
@@ -205,43 +251,96 @@ func (n *Node) Remove(_ context.Context, req *fuse.RemoveRequest) error {
 
 // Write writes data to 'n'. It may overwrite existing data, or grow it.
 func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	if n.IsDir {
-		return fuse.Errno(syscall.EISDIR)
+	if !n.Mode.IsRegular() {
+		return fuse.Errno(syscall.EINVAL)
+	}
+	if req.Offset < 0 {
+		return fuse.Errno(syscall.EINVAL)
+	}
+	if len(req.Data) == 0 {
+		return nil
 	}
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	newLen := uint64(req.Offset) + uint64(len(req.Data))
-	if newLen > maxSize {
+	newSize := uint64(req.Offset) + uint64(len(req.Data))
+	if newSize > maxSize {
 		return fuse.Errno(syscall.EFBIG)
 	}
 
-	l := uint64(len(n.Data))
-	if newLen > l {
-		n.Data = append(n.Data, make([]byte, newLen-l)...)
-	}
-
-	written := copy(n.Data[req.Offset:], req.Data)
-	// TODO(marc): check that fuse forgets the node on errors, otherwise
-	// we'll have updated data in memory but not committed it.
-	if err := n.cfs.update(n); err != nil {
+	// Wrap everything inside a transaction.
+	tx, err := n.cfs.db.Begin()
+	if err != nil {
+		log.Error(err)
 		return err
 	}
-	resp.Size = written
+
+	// Update blocks. They will be added as needed.
+	if err := write(tx, n.ID, n.Size, uint64(req.Offset), req.Data); err != nil {
+		log.Error(err)
+		_ = tx.Rollback()
+		return err
+	}
+
+	originalSize := n.Size
+	if newSize > originalSize {
+		// This was an append, commit the size change.
+		n.Size = newSize
+		if err := updateNode(tx, n); err != nil {
+			log.Error(err)
+			_ = tx.Rollback()
+			// reset our size.
+			n.Size = originalSize
+			return err
+		}
+	}
+
+	// All set: commit.
+	if err := tx.Commit(); err != nil {
+		// Reset our size.
+		log.Error(err)
+		n.Size = originalSize
+		return err
+	}
+
+	// We always write everything.
+	resp.Size = len(req.Data)
 	return nil
 }
 
 // Read reads data from 'n'.
 func (n *Node) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	if n.IsDir {
-		return fuse.Errno(syscall.EISDIR)
+	if !n.Mode.IsRegular() {
+		return fuse.Errno(syscall.EINVAL)
 	}
+	if req.Offset < 0 {
+		// Before beginning of file.
+		return fuse.Errno(syscall.EINVAL)
+	}
+	if req.Size == 0 {
+		// No bytes requested.
+		return nil
+	}
+	offset := uint64(req.Offset)
 
 	n.mu.RLock()
 	defer n.mu.RUnlock()
+	if offset >= n.Size {
+		// Beyond end of file.
+		return nil
+	}
 
-	fuseutil.HandleRead(req, resp, n.Data)
+	to := min(n.Size, offset+uint64(req.Size))
+	if offset == to {
+		return nil
+	}
+
+	data, err := read(n.cfs.db, n.ID, offset, to)
+	if err != nil {
+		return err
+	}
+	resp.Data = data
 	return nil
 }
 
@@ -262,7 +361,7 @@ func (n *Node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.No
 	if !ok {
 		return fmt.Errorf("newDir is not a Node: %v", newDir)
 	}
-	if !n.IsDir || !newNode.IsDir {
+	if !n.Mode.IsDir() || !newNode.Mode.IsDir() {
 		return fuse.Errno(syscall.ENOTDIR)
 	}
 	return n.cfs.rename(n.ID, newNode.ID, req.OldName, req.NewName)

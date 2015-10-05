@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime/pprof"
 	"time"
 
 	"github.com/lib/pq"
@@ -39,6 +40,8 @@ var concurrency = flag.Int("concurrency", 5, "Number of concurrent actors moving
 var transferStyle = flag.String("transfer-style", "txn", "\"single-stmt\" or \"txn\"")
 var usePostgres = flag.Bool("use-postgres", false, "Use postgres instead of cockroach.")
 var balanceCheckInterval = flag.Duration("balance-check-interval", 1*time.Second, "Interval of balance check.")
+var cpuprofile = flag.String("cpuprofile", "", "Write cpu profile to file.")
+var cpuprofileInterval = flag.Duration("cpuprofile-interval", 10*time.Second, "Interval of cpu profiling.")
 
 type measurement struct {
 	read, write, total time.Duration
@@ -206,6 +209,15 @@ func main() {
 
 	verifyBank(db)
 
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
 	lastNow := time.Now()
 	readings := make(chan measurement, 10000)
 
@@ -213,6 +225,7 @@ func main() {
 		go moveMoney(db, readings)
 	}
 
+	times := int((*cpuprofileInterval) / (*balanceCheckInterval))
 	for range time.NewTicker(*balanceCheckInterval).C {
 		now := time.Now()
 		elapsed := time.Since(lastNow)
@@ -231,5 +244,11 @@ func main() {
 			log.Infof("read time: %v, write time: %v, txn time: %v", aggr.read/d, aggr.write/d, aggr.total/d)
 		}
 		verifyBank(db)
+		if *cpuprofile != "" {
+			times--
+			if times <= 0 {
+				break
+			}
+		}
 	}
 }

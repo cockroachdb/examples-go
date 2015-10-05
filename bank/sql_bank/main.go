@@ -44,7 +44,7 @@ type measurement struct {
 	read, write, total time.Duration
 }
 
-func moveMoney(db *sql.DB, readings chan measurement) {
+func moveMoney(db *sql.DB, readings chan<- measurement) {
 	for {
 		from, to := rand.Intn(*numAccounts), rand.Intn(*numAccounts)
 		if from == to {

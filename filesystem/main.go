@@ -29,6 +29,7 @@
 // - create/rm files
 // - read/write files
 // - rename
+// - symlinks
 //
 // WARNING: concurrent access on a single mount is fine. However,
 // behavior is undefined (read broken) when mounted more than once at the
@@ -41,7 +42,7 @@
 //
 // Some TODOs (definitely not a comprehensive list):
 // - support basic attributes (mode, timestamps)
-// - support other types: symlinks, hard links
+// - support other types: hard links
 // - add ref counting (and handle open/release)
 // - sparse files: don't store empty blocks
 // - sparse files 2: keep track of holes

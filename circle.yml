@@ -1,0 +1,19 @@
+machine:
+  services:
+    - docker
+
+dependencies:
+  override:
+    - make deps
+
+test:
+  override:
+    - build/circle-test.sh
+
+deployment:
+  aws:
+    branch: master
+    commands:
+      - aws configure set region us-east-1
+      - build/build-examples.sh
+      - build/push-aws.sh

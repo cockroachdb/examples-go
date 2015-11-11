@@ -23,6 +23,7 @@ package main
 import (
 	"database/sql"
 	"flag"
+	"fmt"
 	"math/rand"
 	"net/url"
 	"sync/atomic"
@@ -46,6 +47,8 @@ var dbURL = flag.String("db-url", "", "URL to connect to a running cockroach clu
 
 // concurrency = number of concurrent insertion processes.
 var concurrency = flag.Int("concurrency", 3, "Number of concurrent writers inserting blocks.")
+
+var tolerateErrors = flag.Bool("tolerate-errors", false, "Keep running on error")
 
 // outputInterval = interval at which information is output to console.
 var outputInterval = flag.Duration("output-interval", 1*time.Second, "Interval of output.")
@@ -77,15 +80,16 @@ func newBlockWriter(db *sql.DB) blockWriter {
 
 // run is an infinite loop in which the blockWriter continuously attempts to
 // write blocks of random data into a table in cockroach DB.
-func (bw blockWriter) run() {
+func (bw blockWriter) run(errCh chan<- error) {
 	for {
 		blockID := bw.rand.Int63()
 		blockData := bw.randomBlock()
 		bw.blockCount++
 		if _, err := bw.db.Exec(insertBlockStmt, blockID, bw.id, bw.blockCount, blockData); err != nil {
-			log.Fatalf("error running blockwriter %s: %s", bw.id, err)
+			errCh <- fmt.Errorf("error running blockwriter %s: %s", bw.id, err)
+		} else {
+			atomic.AddUint64(&numBlocks, 1)
 		}
-		atomic.AddUint64(&numBlocks, 1)
 	}
 }
 
@@ -165,10 +169,10 @@ func setupDatabase() (*sql.DB, error) {
 	}
 	if _, err := db.Exec(`
 	CREATE TABLE IF NOT EXISTS blocks (
-	  block_id BIGINT NOT NULL, 
-	  writer_id STRING NOT NULL, 
+	  block_id BIGINT NOT NULL,
+	  writer_id STRING NOT NULL,
 	  block_num BIGINT NOT NULL,
-	  raw_bytes BYTES NOT NULL, 
+	  raw_bytes BYTES NOT NULL,
 	  PRIMARY KEY (block_id, writer_id, block_num)
 	)`); err != nil {
 		return nil, util.Errorf(err.Error())
@@ -196,16 +200,32 @@ func main() {
 	var lastNumDumps uint64
 	writers := make([]blockWriter, *concurrency)
 
+	errCh := make(chan error)
 	for i := range writers {
 		writers[i] = newBlockWriter(db)
-		go writers[i].run()
+		go writers[i].run(errCh)
 	}
 
+	var numErr int
 	for range time.Tick(*outputInterval) {
 		now := time.Now()
 		elapsed := time.Since(lastNow)
 		dumps := atomic.LoadUint64(&numBlocks)
-		log.Infof("%d dumps were executed at %.1f/second.", (dumps - lastNumDumps), float64(dumps-lastNumDumps)/elapsed.Seconds())
+		log.Infof("%d dumps were executed at %.1f/second (%d total errors)", (dumps - lastNumDumps), float64(dumps-lastNumDumps)/elapsed.Seconds(), numErr)
+		for {
+			select {
+			case err := <-errCh:
+				numErr++
+				if !*tolerateErrors {
+					log.Fatal(err)
+				} else {
+					log.Warning(err)
+				}
+				continue
+			default:
+			}
+			break
+		}
 		lastNumDumps = dumps
 		lastNow = now
 	}

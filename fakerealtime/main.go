@@ -54,9 +54,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/cockroach/security"
-	"github.com/cockroachdb/cockroach/security/securitytest"
-	"github.com/cockroachdb/cockroach/server"
+	_ "github.com/cockroachdb/cockroach/sql/driver"
 	"github.com/cockroachdb/cockroach/util/log"
 	"github.com/montanaflynn/stats"
 )
@@ -190,19 +188,15 @@ func main() {
 	var dbDriver string
 	flag.StringVar(&dbDriver, "db-driver", "cockroach", "database driver to use")
 	var dbAddr string
-	flag.StringVar(&dbAddr, "db-addr", "", "database address. defaults to ephemeral cockroach instance")
+	flag.StringVar(&dbAddr, "db-url", "", "URL to connect to a running database.")
 
 	numChannels := flag.Int("num-channels", 100, "number of channels")
 	numWriters := flag.Int("num-writers", 2, "number of writers")
 	flag.Parse()
 
 	if dbAddr == "" {
-		security.SetReadFileFn(securitytest.Asset)
-		srv := server.StartTestServer(nil)
-		defer srv.Stop()
-
-		dbDriver = "cockroach"
-		dbAddr = fmt.Sprintf("https://root@%s?certs=test_certs", srv.ServingAddr())
+		log.Errorf("--db-url flag is required")
+		return
 	}
 	db, err := sql.Open(dbDriver, dbAddr)
 	if err != nil {

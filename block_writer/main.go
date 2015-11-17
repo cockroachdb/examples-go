@@ -29,9 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cockroachdb/cockroach/security"
-	"github.com/cockroachdb/cockroach/security/securitytest"
-	"github.com/cockroachdb/cockroach/server"
+	_ "github.com/cockroachdb/cockroach/sql/driver"
 	"github.com/cockroachdb/cockroach/util"
 	"github.com/cockroachdb/cockroach/util/log"
 	"github.com/cockroachdb/cockroach/util/uuid"
@@ -41,8 +39,7 @@ const (
 	insertBlockStmt = `INSERT INTO blocks (block_id, writer_id, block_num, raw_bytes) VALUES ($1, $2, $3, $4)`
 )
 
-// db-url = URL of database. If none is specified, a local cluster is
-// automatically started.
+// db-url = URL of database.
 var dbURL = flag.String("db-url", "", "URL to connect to a running cockroach cluster.")
 
 // concurrency = number of concurrent insertion processes.
@@ -116,19 +113,6 @@ func parseFlags() error {
 	return nil
 }
 
-// maybeStartLocalServer will start a temporary local server if no database URL has been
-// provided.
-func maybeStartLocalServer() *server.TestServer {
-	if *dbURL != "" {
-		return nil
-	}
-	// Start a local test server.
-	security.SetReadFileFn(securitytest.Asset)
-	serv := server.StartTestServer(nil)
-	*dbURL = "https://root@" + serv.ServingAddr() + "?certs=test_certs"
-	return serv
-}
-
 // setupDatabase performs initial setup for the example, creating a database and
 // with a single table. If the desired table already exists on the cluster, the
 // existing table will be dropped.
@@ -186,9 +170,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	serv := maybeStartLocalServer()
-	if serv != nil {
-		defer serv.Stop()
+	if *dbURL == "" {
+		log.Errorf("--db-url flag is required")
+		return
 	}
 
 	db, err := setupDatabase()

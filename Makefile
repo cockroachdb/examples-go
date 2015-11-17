@@ -36,10 +36,19 @@ LDFLAGS += -extldflags "-static"
 endif
 
 .PHONY: all
-all: build check
+all: build test check
+
+.PHONY: test
+test:
+	$(GO) test ./...
+
+.PHONY: deps
+deps:
+	$(GO) get -d bazil.org/fuse
+	$(GO) get -d ./...
 
 .PHONY: build
-build: block_writer
+build: deps block_writer
 
 .PHONY: block_writer
 block_writer:

@@ -48,11 +48,15 @@ deps:
 	$(GO) get -d ./...
 
 .PHONY: build
-build: deps block_writer
+build: deps block_writer fakerealtime
 
 .PHONY: block_writer
 block_writer:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o block_writer/block_writer ./block_writer
+
+.PHONY: fakerealtime
+fakerealtime:
+	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o fakerealtime/fakerealtime ./fakerealtime
 
 .PHONY: check
 check:

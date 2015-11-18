@@ -24,23 +24,20 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/url"
+	"os"
 	"sync/atomic"
 	"time"
 
 	_ "github.com/cockroachdb/cockroach/sql/driver"
-	"github.com/cockroachdb/cockroach/util"
-	"github.com/cockroachdb/cockroach/util/log"
 	"github.com/cockroachdb/cockroach/util/uuid"
 )
 
 const (
 	insertBlockStmt = `INSERT INTO blocks (block_id, writer_id, block_num, raw_bytes) VALUES ($1, $2, $3, $4)`
 )
-
-// db-url = URL of database.
-var dbURL = flag.String("db-url", "", "URL to connect to a running cockroach cluster.")
 
 // concurrency = number of concurrent insertion processes.
 var concurrency = flag.Int("concurrency", 3, "Number of concurrent writers inserting blocks.")
@@ -101,23 +98,11 @@ func (bw blockWriter) randomBlock() []byte {
 	return blockData
 }
 
-// parseFlags ensures that values taken from command line flags are valid.
-func parseFlags() error {
-	flag.Parse()
-	if *concurrency < 1 {
-		return util.Errorf("Value of 'concurrency' flag (%d) must be greater than or equal to 1", *concurrency)
-	}
-	if max, min := *maxBlockSizeBytes, *minBlockSizeBytes; max < min {
-		return util.Errorf("Value of 'max-block-bytes' (%d) must be greater than or equal to value of 'min-block-bytes' (%d)", max, min)
-	}
-	return nil
-}
-
 // setupDatabase performs initial setup for the example, creating a database and
 // with a single table. If the desired table already exists on the cluster, the
 // existing table will be dropped.
-func setupDatabase() (*sql.DB, error) {
-	parsedURL, err := url.Parse(*dbURL)
+func setupDatabase(dbURL string) (*sql.DB, error) {
+	parsedURL, err := url.Parse(dbURL)
 	if err != nil {
 		return nil, err
 	}
@@ -130,26 +115,28 @@ func setupDatabase() (*sql.DB, error) {
 	// Open connection to server and create a database.
 	db, err := sql.Open("cockroach", parsedURL.String())
 	if err != nil {
-		return nil, util.Errorf(err.Error())
+		return nil, err
 	}
 	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS datablocks"); err != nil {
-		return nil, util.Errorf(err.Error())
+		return nil, err
 	}
-	db.Close()
+	if err := db.Close(); err != nil {
+		log.Fatal(err)
+	}
 
 	// Open connection directly to the new database.
 	q.Add("database", "datablocks")
 	parsedURL.RawQuery = q.Encode()
 	db, err = sql.Open("cockroach", parsedURL.String())
 	if err != nil {
-		return nil, util.Errorf(err.Error())
+		return nil, err
 	}
 	// Allow a maximum of concurrency+1 connections to the database.
 	db.SetMaxOpenConns(*concurrency + 1)
 
 	// Create the initial table for storing blocks.
 	if _, err := db.Exec(`DROP TABLE IF EXISTS blocks`); err != nil {
-		return nil, util.Errorf(err.Error())
+		return nil, err
 	}
 	if _, err := db.Exec(`
 	CREATE TABLE IF NOT EXISTS blocks (
@@ -159,23 +146,38 @@ func setupDatabase() (*sql.DB, error) {
 	  raw_bytes BYTES NOT NULL,
 	  PRIMARY KEY (block_id, writer_id, block_num)
 	)`); err != nil {
-		return nil, util.Errorf(err.Error())
+		return nil, err
 	}
 
 	return db, nil
 }
 
+var usage = func() {
+	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "  %s <db URL>\n\n", os.Args[0])
+	flag.PrintDefaults()
+}
+
 func main() {
-	if err := parseFlags(); err != nil {
-		log.Fatal(err)
+	flag.Usage = usage
+	flag.Parse()
+
+	if flag.NArg() != 1 {
+		usage()
+		os.Exit(2)
 	}
 
-	if *dbURL == "" {
-		log.Errorf("--db-url flag is required")
-		return
+	dbURL := flag.Arg(0)
+
+	if *concurrency < 1 {
+		log.Fatalf("Value of 'concurrency' flag (%d) must be greater than or equal to 1", *concurrency)
 	}
 
-	db, err := setupDatabase()
+	if max, min := *maxBlockSizeBytes, *minBlockSizeBytes; max < min {
+		log.Fatalf("Value of 'max-block-bytes' (%d) must be greater than or equal to value of 'min-block-bytes' (%d)", max, min)
+	}
+
+	db, err := setupDatabase(dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -195,7 +197,7 @@ func main() {
 		now := time.Now()
 		elapsed := time.Since(lastNow)
 		dumps := atomic.LoadUint64(&numBlocks)
-		log.Infof("%d dumps were executed at %.1f/second (%d total errors)", (dumps - lastNumDumps), float64(dumps-lastNumDumps)/elapsed.Seconds(), numErr)
+		log.Printf("%d dumps were executed at %.1f/second (%d total errors)", (dumps - lastNumDumps), float64(dumps-lastNumDumps)/elapsed.Seconds(), numErr)
 		for {
 			select {
 			case err := <-errCh:
@@ -203,7 +205,7 @@ func main() {
 				if !*tolerateErrors {
 					log.Fatal(err)
 				} else {
-					log.Warning(err)
+					log.Print(err)
 				}
 				continue
 			default:

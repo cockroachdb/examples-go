@@ -50,12 +50,13 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"log"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
 	_ "github.com/cockroachdb/cockroach/sql/driver"
-	"github.com/cockroachdb/cockroach/util/log"
 	"github.com/montanaflynn/stats"
 )
 
@@ -109,7 +110,7 @@ func (s *statistics) report() {
 		// The stats functions return an error only when the input is empty.
 		mean, _ := stats.Mean(writeTimes)
 		stddev, _ := stats.StandardDeviation(writeTimes)
-		log.Infof("wrote %d messages, latency mean=%s, stddev=%s",
+		log.Printf("wrote %d messages, latency mean=%s, stddev=%s",
 			len(writeTimes), time.Duration(mean), time.Duration(stddev))
 	}
 }
@@ -125,7 +126,7 @@ func (w writer) run() {
 	defer w.wg.Done()
 	for {
 		if err := w.writeMessage(); err != nil {
-			log.Errorf("error writing message: %s", err)
+			log.Printf("error writing message: %s", err)
 		}
 	}
 }
@@ -184,21 +185,29 @@ func (w writer) writeMessage() error {
 	}
 }
 
-func main() {
-	var dbDriver string
-	flag.StringVar(&dbDriver, "db-driver", "cockroach", "database driver to use")
-	var dbAddr string
-	flag.StringVar(&dbAddr, "db-url", "", "URL to connect to a running database.")
+var usage = func() {
+	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "  %s <db URL>\n\n", os.Args[0])
+	flag.PrintDefaults()
+}
 
+func main() {
+	flag.Usage = usage
+
+	var dbDriver string
+	flag.StringVar(&dbDriver, "driver", "cockroach", "database driver to use")
 	numChannels := flag.Int("num-channels", 100, "number of channels")
 	numWriters := flag.Int("num-writers", 2, "number of writers")
 	flag.Parse()
 
-	if dbAddr == "" {
-		log.Errorf("--db-url flag is required")
-		return
+	if flag.NArg() != 1 {
+		usage()
+		os.Exit(2)
 	}
-	db, err := sql.Open(dbDriver, dbAddr)
+
+	dbURL := flag.Arg(0)
+
+	db, err := sql.Open(dbDriver, dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}

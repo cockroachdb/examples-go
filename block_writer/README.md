@@ -18,7 +18,7 @@ Run against an existing cockroach node or cluster.
 
 # Build block_writer example.
 # Start it with:
-./block_writer --db-url=http://localhost:26257
+./block_writer http://localhost:26257
 ```
 
 #### Insecure node or cluster
@@ -26,7 +26,7 @@ Run against an existing cockroach node or cluster.
 # Launch your node or cluster in insecure mode (with --insecure passed to cockroach).
 # Find a reachable address: [mycockroach:26257].
 # Run the example with:
-./block_writer --db-url=http://mycockroach:26257
+./block_writer http://mycockroach:26257
 ```
 
 #### Secure node or cluster
@@ -34,5 +34,5 @@ Run against an existing cockroach node or cluster.
 # Launch your node or cluster in secure mode with certificates in [mycertsdir]
 # Find a reachable address:[mycockroach:26257].
 # Run the example with:
-./block_writer --db-url=https://mycockroach:26257/?certs=mycertsdir
+./block_writer https://mycockroach:26257/?certs=mycertsdir
 ```

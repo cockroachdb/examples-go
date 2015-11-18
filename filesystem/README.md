@@ -1,12 +1,10 @@
-# Fake Real Time example
+# Filesystem example
 
 ## Summary
 
-This example uses a log-style table in an approximation of the
-"fake real time" system used at Friendfeed. Two tables are used: a
-`messages` table stores the complete data for all messages
-organized by channel, and a global `updates` table stores metadata
-about recently-updated channels.
+This is a fuse filesystem using cockroach as a backing store.
+The implemented features attempt to be posix compliant.
+See `main.go` for more details, including implemented features and caveats.
 
 ## Running
 
@@ -18,9 +16,12 @@ Run against an existing cockroach node or cluster.
 # Start it in dev mode (listens on localhost:26257)
 ./cockroach start --dev
 
-# Build fakerealtime example.
+# Build filesystem example.
 # Start it with:
-./fakerealtime http://localhost:26257
+mkdir /tmp/foo
+./filesystem http://localhost:26257 /tmp/foo
+# <CTRL-C> to umount and quit
+# Use /tmp/foo as a filesystem.
 ```
 
 #### Insecure node or cluster
@@ -28,7 +29,10 @@ Run against an existing cockroach node or cluster.
 # Launch your node or cluster in insecure mode (with --insecure passed to cockroach).
 # Find a reachable address: [mycockroach:26257].
 # Run the example with:
-./fakerealtime http://mycockroach:26257
+mkdir /tmp/foo
+./filesystem http://mycockroach:26257 /tmp/foo
+# <CTRL-C> to umount and quit
+# Use /tmp/foo as a filesystem.
 ```
 
 #### Secure node or cluster
@@ -36,5 +40,8 @@ Run against an existing cockroach node or cluster.
 # Launch your node or cluster in secure mode with certificates in [mycertsdir]
 # Find a reachable address:[mycockroach:26257].
 # Run the example with:
-./fakerealtime https://mycockroach:26257/?certs=mycertsdir
+mkdir /tmp/foo
+./filesystem https://mycockroach:26257/?certs=mycertsdir /tmp/foo
+# <CTRL-C> to umount and quit
+# Use /tmp/foo as a filesystem.
 ```

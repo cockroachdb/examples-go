@@ -59,15 +59,12 @@ import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
-	"github.com/cockroachdb/cockroach/security"
-	"github.com/cockroachdb/cockroach/security/securitytest"
-	"github.com/cockroachdb/cockroach/server"
 	_ "github.com/cockroachdb/cockroach/sql/driver"
 )
 
 var usage = func() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "  %s <mountpoint>\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "  %s <db URL> <mountpoint>\n\n", os.Args[0])
 	flag.PrintDefaults()
 }
 
@@ -75,19 +72,15 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if flag.NArg() != 1 {
+	if flag.NArg() != 2 {
 		usage()
 		os.Exit(2)
 	}
-	mountpoint := flag.Arg(0)
 
-	security.SetReadFileFn(securitytest.Asset)
-	serv := server.StartTestServer(nil)
-	defer serv.Stop()
-	url := "https://root@" + serv.ServingAddr() + "?certs=test_certs"
+	dbURL, mountPoint := flag.Arg(0), flag.Arg(1)
 
 	// Open DB connection first.
-	db, err := sql.Open("cockroach", url)
+	db, err := sql.Open("cockroach", dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -98,24 +91,9 @@ func main() {
 	}
 
 	cfs := CFS{db}
-	{
-		// For testing only.
-		if err := cfs.create(rootNodeID, "myfile", cfs.newFileNode()); err != nil {
-			log.Fatal(err)
-		}
-		if err := cfs.create(rootNodeID, "mydir", cfs.newDirNode()); err != nil {
-			log.Fatal(err)
-		}
-		results, err := cfs.list(0)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Print(results)
-	}
-
 	// Mount filesystem.
 	c, err := fuse.Mount(
-		mountpoint,
+		mountPoint,
 		fuse.FSName("CockroachFS"),
 		fuse.Subtype("CockroachFS"),
 		fuse.LocalVolume(),
@@ -132,7 +110,7 @@ func main() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt)
 		for range sig {
-			if err := fuse.Unmount(mountpoint); err != nil {
+			if err := fuse.Unmount(mountPoint); err != nil {
 				log.Printf("Signal received, but could not unmount: %s", err)
 			} else {
 				break

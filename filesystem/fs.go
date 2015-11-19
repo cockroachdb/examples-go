@@ -30,21 +30,21 @@ const rootNodeID = 1
 
 const (
 	fsSchema = `
-CREATE DATABASE fs;
+CREATE DATABASE IF NOT EXISTS fs;
 
-CREATE TABLE fs.namespace (
+CREATE TABLE IF NOT EXISTS fs.namespace (
   parentID INT,
   name     STRING,
   id       INT,
   PRIMARY KEY (parentID, name)
 );
 
-CREATE TABLE fs.inode (
+CREATE TABLE IF NOT EXISTS fs.inode (
   id    INT PRIMARY KEY,
   inode STRING
 );
 
-CREATE TABLE fs.block (
+CREATE TABLE IF NOT EXISTS fs.block (
   id    INT,
   block INT,
   data  BYTES,

@@ -1,12 +1,9 @@
-# Fake Real Time example
+# Bank example
 
 ## Summary
 
-This example uses a log-style table in an approximation of the
-"fake real time" system used at Friendfeed. Two tables are used: a
-`messages` table stores the complete data for all messages
-organized by channel, and a global `updates` table stores metadata
-about recently-updated channels.
+The bank example program continuously performs balance transfers between
+accounts using concurrent transactions.
 
 ## Running
 
@@ -18,9 +15,9 @@ Run against an existing cockroach node or cluster.
 # Start it in dev mode (listens on localhost:26257)
 ./cockroach start --dev
 
-# Build fakerealtime example.
+# Build sql_bank example.
 # Start it with:
-./fakerealtime http://localhost:26257
+./sql_bank http://localhost:26257
 ```
 
 #### Insecure node or cluster
@@ -28,7 +25,7 @@ Run against an existing cockroach node or cluster.
 # Launch your node or cluster in insecure mode (with --insecure passed to cockroach).
 # Find a reachable address: [mycockroach:26257].
 # Run the example with:
-./fakerealtime http://mycockroach:26257
+./sql_bank http://mycockroach:26257
 ```
 
 #### Secure node or cluster
@@ -36,5 +33,5 @@ Run against an existing cockroach node or cluster.
 # Launch your node or cluster in secure mode with certificates in [mycertsdir]
 # Find a reachable address:[mycockroach:26257].
 # Run the example with:
-./fakerealtime https://mycockroach:26257/?certs=mycertsdir
+./sql_bank https://mycockroach:26257/?certs=mycertsdir
 ```

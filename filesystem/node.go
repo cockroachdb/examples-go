@@ -21,12 +21,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"sync"
 	"syscall"
-
-	"github.com/cockroachdb/cockroach/util/log"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -134,13 +133,13 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 	// Wrap everything inside a transaction.
 	tx, err := n.cfs.db.Begin()
 	if err != nil {
-		log.Error(err)
+		log.Print(err)
 		return err
 	}
 
 	// Resize blocks as needed.
 	if err := resizeBlocks(tx, n.ID, n.Size, req.Size); err != nil {
-		log.Error(err)
+		log.Print(err)
 		_ = tx.Rollback()
 		return err
 	}
@@ -150,7 +149,7 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 	originalSize := n.Size
 	n.Size = req.Size
 	if err := updateNode(tx, n); err != nil {
-		log.Error(err)
+		log.Print(err)
 		_ = tx.Rollback()
 		// reset our size.
 		n.Size = originalSize
@@ -160,7 +159,7 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 	// All set: commit.
 	if err := tx.Commit(); err != nil {
 		// Reset our size.
-		log.Error(err)
+		log.Print(err)
 		n.Size = originalSize
 		return err
 	}
@@ -272,13 +271,13 @@ func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.Write
 	// Wrap everything inside a transaction.
 	tx, err := n.cfs.db.Begin()
 	if err != nil {
-		log.Error(err)
+		log.Print(err)
 		return err
 	}
 
 	// Update blocks. They will be added as needed.
 	if err := write(tx, n.ID, n.Size, uint64(req.Offset), req.Data); err != nil {
-		log.Error(err)
+		log.Print(err)
 		_ = tx.Rollback()
 		return err
 	}
@@ -288,7 +287,7 @@ func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.Write
 		// This was an append, commit the size change.
 		n.Size = newSize
 		if err := updateNode(tx, n); err != nil {
-			log.Error(err)
+			log.Print(err)
 			_ = tx.Rollback()
 			// reset our size.
 			n.Size = originalSize
@@ -299,7 +298,7 @@ func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.Write
 	// All set: commit.
 	if err := tx.Commit(); err != nil {
 		// Reset our size.
-		log.Error(err)
+		log.Print(err)
 		n.Size = originalSize
 		return err
 	}

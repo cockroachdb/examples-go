@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
 	"sync/atomic"
@@ -38,6 +39,11 @@ import (
 const (
 	insertBlockStmt = `INSERT INTO blocks (block_id, writer_id, block_num, raw_bytes) VALUES ($1, $2, $3, $4)`
 )
+
+// serveAddr is the address the block writer will bind to for serving health
+// monitoring requests. This allows an external service to determine if the
+// block writer is running.
+var serveAddr = flag.String("addr", ":8080", "Default host:port address to bind the local server, used to respond to health queries.")
 
 // concurrency = number of concurrent insertion processes.
 var concurrency = flag.Int("concurrency", 3, "Number of concurrent writers inserting blocks.")
@@ -96,6 +102,22 @@ func (bw blockWriter) randomBlock() []byte {
 		blockData[i] = byte(bw.rand.Int() & 0xff)
 	}
 	return blockData
+}
+
+// handleHealth handles incoming requests to the '/health' endpoint, allowing
+// this service to be monitored over http.
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprint(w, "Service healthy.")
+}
+
+// serveHealth starts an http server which handles incoming health requests. If
+// the server cannot be successfully started, the process is aborted.
+func serveHealth() {
+	http.HandleFunc("/health", handleHealth)
+	err := http.ListenAndServe(*serveAddr, nil)
+	if err != nil {
+		log.Fatalf("could not start health monitoring endpoint: %s", err)
+	}
 }
 
 // setupDatabase performs initial setup for the example, creating a database and
@@ -181,6 +203,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Set up http server for status monitor.
+	go serveHealth()
 
 	lastNow := time.Now()
 	var lastNumDumps uint64

@@ -40,16 +40,16 @@ const (
 )
 
 // concurrency = number of concurrent insertion processes.
-var concurrency = flag.Int("concurrency", 3, "Number of concurrent writers inserting blocks.")
+var concurrency = flag.Int("concurrency", 3, "Number of concurrent writers inserting blocks")
 
 var tolerateErrors = flag.Bool("tolerate-errors", false, "Keep running on error")
 
 // outputInterval = interval at which information is output to console.
-var outputInterval = flag.Duration("output-interval", 1*time.Second, "Interval of output.")
+var outputInterval = flag.Duration("output-interval", 1*time.Second, "Interval of output")
 
 // Minimum and maximum size of inserted blocks.
-var minBlockSizeBytes = flag.Int("min-block-bytes", 256, "Minimum amount of raw data written with each insertion.")
-var maxBlockSizeBytes = flag.Int("max-block-bytes", 1024, "Maximum amount of raw data written with each insertion.")
+var minBlockSizeBytes = flag.Int("min-block-bytes", 256, "Minimum amount of raw data written with each insertion")
+var maxBlockSizeBytes = flag.Int("max-block-bytes", 1024, "Maximum amount of raw data written with each insertion")
 
 // numBlocks keeps a global count of successfully written blocks.
 var numBlocks uint64
@@ -135,9 +135,6 @@ func setupDatabase(dbURL string) (*sql.DB, error) {
 	db.SetMaxOpenConns(*concurrency + 1)
 
 	// Create the initial table for storing blocks.
-	if _, err := db.Exec(`DROP TABLE IF EXISTS blocks`); err != nil {
-		return nil, err
-	}
 	if _, err := db.Exec(`
 	CREATE TABLE IF NOT EXISTS blocks (
 	  block_id BIGINT NOT NULL,
@@ -177,9 +174,18 @@ func main() {
 		log.Fatalf("Value of 'max-block-bytes' (%d) must be greater than or equal to value of 'min-block-bytes' (%d)", max, min)
 	}
 
-	db, err := setupDatabase(dbURL)
-	if err != nil {
-		log.Fatal(err)
+	var db *sql.DB
+	{
+		var err error
+		for err == nil || *tolerateErrors {
+			db, err = setupDatabase(dbURL)
+			if err == nil {
+				break
+			}
+			if !*tolerateErrors {
+				log.Fatal(err)
+			}
+		}
 	}
 
 	lastNow := time.Now()

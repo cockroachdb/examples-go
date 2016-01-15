@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/client"
+	"github.com/cockroachdb/cockroach/roachpb"
 	"github.com/cockroachdb/cockroach/security"
 	"github.com/cockroachdb/cockroach/security/securitytest"
 	"github.com/cockroachdb/cockroach/server"
@@ -108,7 +109,7 @@ func (bank *Bank) continuouslyTransferMoney(cash int64) {
 		}
 		exchangeAmount := rand.Int63n(cash)
 		// transferMoney transfers exchangeAmount between the two accounts
-		transferMoney := func(runner client.Runner) error {
+		transferMoney := func(runner client.Runner) *roachpb.Error {
 			batchRead := &client.Batch{}
 			batchRead.Get(from)
 			batchRead.Get(to)
@@ -117,9 +118,8 @@ func (bank *Bank) continuouslyTransferMoney(cash int64) {
 			}
 			// Read from value.
 			fromAccount := &Account{}
-			err := fromAccount.decode(batchRead.Results[0].Rows[0].ValueBytes())
-			if err != nil {
-				return err
+			if err := fromAccount.decode(batchRead.Results[0].Rows[0].ValueBytes()); err != nil {
+				log.Fatalf("decoding error: %s", err)
 			}
 			// Ensure there is enough cash.
 			if fromAccount.Balance < exchangeAmount {
@@ -127,27 +127,27 @@ func (bank *Bank) continuouslyTransferMoney(cash int64) {
 			}
 			// Read to value.
 			toAccount := &Account{}
-			errRead := toAccount.decode(batchRead.Results[1].Rows[0].ValueBytes())
-			if errRead != nil {
-				return errRead
+			if err := toAccount.decode(batchRead.Results[1].Rows[0].ValueBytes()); err != nil {
+				log.Fatalf("decoding error: %s", err)
 			}
+
 			// Update both accounts.
 			batchWrite := &client.Batch{}
 			fromAccount.Balance -= exchangeAmount
 			toAccount.Balance += exchangeAmount
 			if fromValue, err := fromAccount.encode(); err != nil {
-				return err
+				log.Fatalf("encoding error: %s", err)
 			} else if toValue, err := toAccount.encode(); err != nil {
-				return err
+				log.Fatalf("encoding error: %s", err)
 			} else {
 				batchWrite.Put(from, fromValue)
 				batchWrite.Put(to, toValue)
 			}
 			return runner.Run(batchWrite)
 		}
-		var err error
+		var err *roachpb.Error
 		if *useTransaction {
-			err = bank.db.Txn(func(txn *client.Txn) error { return transferMoney(txn) })
+			err = bank.db.Txn(func(txn *client.Txn) *roachpb.Error { return transferMoney(txn) })
 		} else {
 			err = transferMoney(bank.db)
 		}
@@ -165,7 +165,7 @@ func (bank *Bank) continuouslyTransferMoney(cash int64) {
 func (bank *Bank) initBankAccounts(cash int64) int64 {
 	var oldCash int64
 	var newCash int64
-	if err := bank.db.Txn(func(txn *client.Txn) error {
+	if err := bank.db.Txn(func(txn *client.Txn) *roachpb.Error {
 		// Need to reset on each Txn restart.
 		oldCash = 0
 		newCash = 0
@@ -187,15 +187,15 @@ func (bank *Bank) initBankAccounts(cash int64) int64 {
 		// Let's initialize all the accounts.
 		batch := &client.Batch{}
 		account := Account{Balance: cash}
-		value, err := account.encode()
-		if err != nil {
-			return err
-		}
-		for i := 0; i < bank.numAccounts; i++ {
-			id := bank.makeAccountID(i)
-			if !accts[string(id)] {
-				batch.Put(id, value)
-				newCash += cash
+		if value, err := account.encode(); err != nil {
+			log.Fatalf("encoding error: %s", err)
+		} else {
+			for i := 0; i < bank.numAccounts; i++ {
+				id := bank.makeAccountID(i)
+				if !accts[string(id)] {
+					batch.Put(id, value)
+					newCash += cash
+				}
 			}
 		}
 		return txn.Run(batch)

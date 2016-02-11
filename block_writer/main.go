@@ -31,18 +31,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/cockroachdb/cockroach/sql/driver"
 	"github.com/cockroachdb/cockroach/util/uuid"
-)
-
-const (
-	insertBlockStmt = `INSERT INTO blocks (block_id, writer_id, block_num, raw_bytes) VALUES ($1, $2, $3, $4)`
+	_ "github.com/lib/pq"
 )
 
 // concurrency = number of concurrent insertion processes.
 var concurrency = flag.Int("concurrency", 3, "Number of concurrent writers inserting blocks.")
-
 var tolerateErrors = flag.Bool("tolerate-errors", false, "Keep running on error")
+var sqlDialect = flag.String("sql-dialect", "cockroach", "Dialect of SQL to use in example. One of 'cockroach' or 'postgres'")
 
 // outputInterval = interval at which information is output to console.
 var outputInterval = flag.Duration("output-interval", 1*time.Second, "Interval of output.")
@@ -50,6 +46,146 @@ var outputInterval = flag.Duration("output-interval", 1*time.Second, "Interval o
 // Minimum and maximum size of inserted blocks.
 var minBlockSizeBytes = flag.Int("min-block-bytes", 256, "Minimum amount of raw data written with each insertion.")
 var maxBlockSizeBytes = flag.Int("max-block-bytes", 1024, "Maximum amount of raw data written with each insertion.")
+
+// SqlLogic implements basic blockwriter logic for a specific SQL dialect.
+type SqlLogic interface {
+	InsertBlock(int64, uint64, string, []byte) error
+	Setup(string) error
+}
+
+// CockroachLogic implements blockwriter logic for Cockroach SQL.
+type CockroachLogic struct {
+	db *sql.DB
+}
+
+func (cl CockroachLogic) InsertBlock(blockID int64, blockNum uint64, writerID string, data []byte) error {
+	const insertBlockStmt = `INSERT INTO datablocks.blocks (block_id, block_num, writer_id, raw_bytes) VALUES ($1, $2, $3, $4)`
+	_, err := cl.db.Exec(insertBlockStmt, blockID, blockNum, writerID, data)
+	return err
+}
+
+func (cl *CockroachLogic) Setup(connString string) error {
+	parsedURL, err := url.Parse(connString)
+	if err != nil {
+		return err
+	}
+
+	// Remove any database specified in the connection URL.
+	q := parsedURL.Query()
+	q.Del("dbname")
+	parsedURL.RawQuery = q.Encode()
+	parsedURL.RawPath = ""
+
+	// In order to create initial database, open connection to server with no database.
+	cl.db, err = sql.Open("postgres", parsedURL.String())
+	if err != nil {
+		return err
+	}
+	if _, err = cl.db.Exec("CREATE DATABASE IF NOT EXISTS datablocks"); err != nil {
+		return err
+	}
+	if err := cl.db.Close(); err != nil {
+		return err
+	}
+
+	// Open connection to the datablocks database.
+	q = parsedURL.Query()
+	q.Add("dbname", "datablocks")
+	parsedURL.RawQuery = q.Encode()
+	cl.db, err = sql.Open("postgres", parsedURL.String())
+	if err != nil {
+		return err
+	}
+
+	// Create the 'blocks' table, dropping it if it already existed.
+	if _, err := cl.db.Exec(`DROP TABLE IF EXISTS blocks`); err != nil {
+		return err
+	}
+	if _, err := cl.db.Exec(`
+		CREATE TABLE IF NOT EXISTS blocks (
+		  block_id BIGINT NOT NULL,
+		  writer_id TEXT NOT NULL,
+		  block_num BIGINT NOT NULL,
+		  raw_bytes BYTES NOT NULL,
+		  PRIMARY KEY (block_id, writer_id, block_num)
+		)`); err != nil {
+		return err
+	}
+
+	cl.db.SetMaxOpenConns(*concurrency + 1)
+	return nil
+}
+
+// CockroachLogic implements blockwriter logic for Postgres SQL.
+type PostgresLogic struct {
+	db *sql.DB
+}
+
+func (pl PostgresLogic) InsertBlock(blockID int64, blockNum uint64, writerID string, data []byte) error {
+	const insertBlockStmt = `INSERT INTO blocks (block_id, block_num, writer_id, raw_bytes) VALUES ($1, $2, $3, $4)`
+	_, err := pl.db.Exec(insertBlockStmt, blockID, blockNum, writerID, data)
+	return err
+}
+
+func (pl *PostgresLogic) Setup(connString string) error {
+	parsedURL, err := url.Parse(connString)
+	if err != nil {
+		return err
+	}
+
+	// Remove any dbname specified in the provided connection url.
+	q := parsedURL.Query()
+	q.Set("dbname", "postgres")
+	parsedURL.RawQuery = q.Encode()
+	parsedURL.RawPath = ""
+
+	// Open connection to the 'postgres' database.
+	pl.db, err = sql.Open("postgres", parsedURL.String())
+	if err != nil {
+		return err
+	}
+	// There is no conditional database creation in postgres; we must first
+	// check it if it exists, and then create it if necessary.
+	var count int
+	if err := pl.db.QueryRow("SELECT COUNT(*) FROM pg_database WHERE datname = 'datablocks'").Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err = pl.db.Exec("CREATE DATABASE datablocks"); err != nil {
+			return err
+		}
+	}
+	if err := pl.db.Close(); err != nil {
+		return err
+	}
+
+	// Open connection directly to the datablocks database.
+	q = parsedURL.Query()
+	q.Add("dbname", "datablocks")
+	parsedURL.RawQuery = q.Encode()
+	pl.db, err = sql.Open("postgres", parsedURL.String())
+	if err != nil {
+		return err
+	}
+
+	// Create the 'blocks' table, dropping it if it already exists.
+	if _, err := pl.db.Exec(`DROP TABLE IF EXISTS blocks`); err != nil {
+		return err
+	}
+	if _, err := pl.db.Exec(`
+		CREATE TABLE IF NOT EXISTS blocks (
+		  block_id BIGINT NOT NULL,
+		  writer_id TEXT NOT NULL,
+		  block_num BIGINT NOT NULL,
+		  raw_bytes BYTEA NOT NULL,
+		  PRIMARY KEY (block_id, writer_id, block_num)
+		)`); err != nil {
+		return err
+	}
+
+	pl.db.SetMaxOpenConns(*concurrency + 1)
+	return nil
+}
 
 // numBlocks keeps a global count of successfully written blocks.
 var numBlocks uint64
@@ -59,27 +195,27 @@ var numBlocks uint64
 type blockWriter struct {
 	id         string
 	blockCount uint64
-	db         *sql.DB
+	logic      SqlLogic
 	rand       *rand.Rand
 }
 
-func newBlockWriter(db *sql.DB) blockWriter {
+func newBlockWriter(logic SqlLogic) *blockWriter {
 	source := rand.NewSource(int64(time.Now().UnixNano()))
-	return blockWriter{
-		db:   db,
-		id:   uuid.NewUUID4().String(),
-		rand: rand.New(source),
+	return &blockWriter{
+		logic: logic,
+		id:    uuid.NewUUID4().String(),
+		rand:  rand.New(source),
 	}
 }
 
 // run is an infinite loop in which the blockWriter continuously attempts to
 // write blocks of random data into a table in cockroach DB.
-func (bw blockWriter) run(errCh chan<- error) {
+func (bw *blockWriter) run(errCh chan<- error) {
 	for {
 		blockID := bw.rand.Int63()
 		blockData := bw.randomBlock()
 		bw.blockCount++
-		if _, err := bw.db.Exec(insertBlockStmt, blockID, bw.id, bw.blockCount, blockData); err != nil {
+		if err := bw.logic.InsertBlock(blockID, bw.blockCount, bw.id, blockData); err != nil {
 			errCh <- fmt.Errorf("error running blockwriter %s: %s", bw.id, err)
 		} else {
 			atomic.AddUint64(&numBlocks, 1)
@@ -98,61 +234,7 @@ func (bw blockWriter) randomBlock() []byte {
 	return blockData
 }
 
-// setupDatabase performs initial setup for the example, creating a database and
-// with a single table. If the desired table already exists on the cluster, the
-// existing table will be dropped.
-func setupDatabase(dbURL string) (*sql.DB, error) {
-	parsedURL, err := url.Parse(dbURL)
-	if err != nil {
-		return nil, err
-	}
-
-	// Remove database from parsedUrl
-	q := parsedURL.Query()
-	q.Del("database")
-	parsedURL.RawQuery = q.Encode()
-
-	// Open connection to server and create a database.
-	db, err := sql.Open("cockroach", parsedURL.String())
-	if err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS datablocks"); err != nil {
-		return nil, err
-	}
-	if err := db.Close(); err != nil {
-		log.Fatal(err)
-	}
-
-	// Open connection directly to the new database.
-	q.Add("database", "datablocks")
-	parsedURL.RawQuery = q.Encode()
-	db, err = sql.Open("cockroach", parsedURL.String())
-	if err != nil {
-		return nil, err
-	}
-	// Allow a maximum of concurrency+1 connections to the database.
-	db.SetMaxOpenConns(*concurrency + 1)
-
-	// Create the initial table for storing blocks.
-	if _, err := db.Exec(`DROP TABLE IF EXISTS blocks`); err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec(`
-	CREATE TABLE IF NOT EXISTS blocks (
-	  block_id BIGINT NOT NULL,
-	  writer_id STRING NOT NULL,
-	  block_num BIGINT NOT NULL,
-	  raw_bytes BYTES NOT NULL,
-	  PRIMARY KEY (block_id, writer_id, block_num)
-	)`); err != nil {
-		return nil, err
-	}
-
-	return db, nil
-}
-
-var usage = func() {
+func usage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "  %s <db URL>\n\n", os.Args[0])
 	flag.PrintDefaults()
@@ -170,25 +252,40 @@ func main() {
 	dbURL := flag.Arg(0)
 
 	if *concurrency < 1 {
-		log.Fatalf("Value of 'concurrency' flag (%d) must be greater than or equal to 1", *concurrency)
+		fmt.Fprintf(os.Stderr, "Value of 'concurrency' flag (%d) must be greater than or equal to 1", *concurrency)
+		usage()
+		os.Exit(1)
 	}
 
 	if max, min := *maxBlockSizeBytes, *minBlockSizeBytes; max < min {
-		log.Fatalf("Value of 'max-block-bytes' (%d) must be greater than or equal to value of 'min-block-bytes' (%d)", max, min)
+		fmt.Fprintf(os.Stderr, "Value of 'max-block-bytes' (%d) must be greater than or equal to value of 'min-block-bytes' (%d)", max, min)
+		usage()
+		os.Exit(1)
 	}
 
-	db, err := setupDatabase(dbURL)
-	if err != nil {
+	var logic SqlLogic
+	switch *sqlDialect {
+	case "cockroach":
+		logic = &CockroachLogic{}
+	case "postgres":
+		logic = &PostgresLogic{}
+	default:
+		fmt.Fprintf(os.Stderr, "Invalid value for 'sql-dialect' flag, must be 'cockroach' or 'postgres'")
+		usage()
+		os.Exit(1)
+	}
+
+	if err := logic.Setup(dbURL); err != nil {
 		log.Fatal(err)
 	}
 
 	lastNow := time.Now()
 	var lastNumDumps uint64
-	writers := make([]blockWriter, *concurrency)
+	writers := make([]*blockWriter, *concurrency)
 
 	errCh := make(chan error)
 	for i := range writers {
-		writers[i] = newBlockWriter(db)
+		writers[i] = newBlockWriter(logic)
 		go writers[i].run(errCh)
 	}
 

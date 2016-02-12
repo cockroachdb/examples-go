@@ -59,7 +59,8 @@ import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
-	_ "github.com/cockroachdb/cockroach/sql/driver"
+	// Import postgres driver.
+	_ "github.com/lib/pq"
 )
 
 var usage = func() {
@@ -80,7 +81,7 @@ func main() {
 	dbURL, mountPoint := flag.Arg(0), flag.Arg(1)
 
 	// Open DB connection first.
-	db, err := sql.Open("cockroach", dbURL)
+	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}

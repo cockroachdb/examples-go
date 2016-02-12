@@ -76,11 +76,13 @@ func (cfs CFS) create(parentID uint64, name string, node *Node) error {
 	if err != nil {
 		return err
 	}
-	const sql = `
-INSERT INTO fs.inode VALUES ($1, $2);
-INSERT INTO fs.namespace VALUES ($3, $4, $1);
-`
-	if _, err := tx.Exec(sql, node.ID, inode, parentID, name); err != nil {
+	const insertNode = `INSERT INTO fs.inode VALUES ($1, $2)`
+	if _, err := tx.Exec(insertNode, node.ID, inode); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
+	if _, err := tx.Exec(insertNamespace, parentID, name, node.ID); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -114,15 +116,22 @@ SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
 	}
 
 	// Delete all entries.
-	const sql = `
-DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
-DELETE FROM fs.inode WHERE id = $3;
-DELETE FROM fs.block WHERE id = $3;
-`
-	if _, err := tx.Exec(sql, parentID, name, id); err != nil {
+	const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
+	if _, err := tx.Exec(deleteNamespace, parentID, name); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
+	const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
+	if _, err := tx.Exec(deleteInode, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	const deleteBlock = `DELETE FROM fs.block WHERE id = $1`
+	if _, err := tx.Exec(deleteBlock, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
 	return tx.Commit()
 }
 
@@ -221,27 +230,33 @@ func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) 
 	// - destObject may be nil. If not, its inode can be deleted.
 	if destObject == nil {
 		// No new object: use INSERT.
-		const insertSQL = `
-DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
-INSERT INTO fs.namespace VALUES ($3, $4, $5);
-`
-		if _, err := tx.Exec(insertSQL,
-			oldParentID, oldName,
-			newParentID, newName, srcObject.ID); err != nil {
+		const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
+		if _, err := tx.Exec(deleteNamespace, oldParentID, oldName); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+
+		const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
+		if _, err := tx.Exec(insertNamespace, newParentID, newName, srcObject.ID); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 	} else {
 		// Destination exists.
-		const updateSQL = `
-DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2);
-UPDATE fs.namespace SET id = $3 WHERE (parentID, name) = ($4, $5);
-DELETE FROM fs.inode WHERE id = $6;
-`
-		if _, err := tx.Exec(updateSQL,
-			oldParentID, oldName,
-			srcObject.ID, newParentID, newName,
-			destObject.ID); err != nil {
+		const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
+		if _, err := tx.Exec(deleteNamespace, oldParentID, oldName); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+
+		const updateNamespace = `UPDATE fs.namespace SET id = $1 WHERE (parentID, name) = ($2, $3)`
+		if _, err := tx.Exec(updateNamespace, srcObject.ID, newParentID, newName); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+
+		const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
+		if _, err := tx.Exec(deleteInode, destObject.ID); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

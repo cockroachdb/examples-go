@@ -29,10 +29,15 @@ import (
 )
 
 func initTestDB(t *testing.T) (*server.TestServer, *sql.DB) {
-	s := server.StartTestServer(nil)
-	url := "https://root@" + s.ServingAddr() + "?certs=test_certs"
+	s := &server.TestServer{}
+	s.Ctx = server.NewTestContext()
+	s.Ctx.Insecure = true
+	if err := s.Start(); err != nil {
+		t.Fatalf("Could not start server: %v", err)
+	}
+	url := "postgresql://root@" + s.PGAddr() + "?sslmode=disable"
 
-	db, err := sql.Open("cockroach", url)
+	db, err := sql.Open("postgres", url)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,13 +13,13 @@ Run against an existing cockroach node or cluster.
 #### Development node
 ```
 # Build cockroach binary from https://github.com/cockroachdb/cockroach
-# Start it in dev mode (listens on localhost:26257)
+# Start it in dev mode (listens on localhost:15432)
 ./cockroach start --dev
 
 # Build filesystem example.
 # Start it with:
 mkdir /tmp/foo
-./filesystem http://localhost:26257 /tmp/foo
+./filesystem postgresql://root@localhost:15432/?sslmode=disable /tmp/foo
 # <CTRL-C> to umount and quit
 # Use /tmp/foo as a filesystem.
 ```
@@ -27,10 +27,10 @@ mkdir /tmp/foo
 #### Insecure node or cluster
 ```
 # Launch your node or cluster in insecure mode (with --insecure passed to cockroach).
-# Find a reachable address: [mycockroach:26257].
+# Find a reachable address: [mycockroach:15432].
 # Run the example with:
 mkdir /tmp/foo
-./filesystem http://mycockroach:26257 /tmp/foo
+./filesystem postgresql://root@mycockroach:15432/?sslmode=disable /tmp/foo
 # <CTRL-C> to umount and quit
 # Use /tmp/foo as a filesystem.
 ```
@@ -38,10 +38,10 @@ mkdir /tmp/foo
 #### Secure node or cluster
 ```
 # Launch your node or cluster in secure mode with certificates in [mycertsdir]
-# Find a reachable address:[mycockroach:26257].
+# Find a reachable address:[mycockroach:15432].
 # Run the example with:
 mkdir /tmp/foo
-./filesystem https://mycockroach:26257/?certs=mycertsdir /tmp/foo
+./filesystem postgresqls://root@mycockroach:15432/?certs=verify-ca&sslcert=mycertsdir/root.client.crt&sslkey=mycertsdir/root.client.key&sslrootcert=mycertsdir/ca.crt /tmp/foo
 # <CTRL-C> to umount and quit
 # Use /tmp/foo as a filesystem.
 ```

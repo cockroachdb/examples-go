@@ -276,7 +276,7 @@ func (cfs CFS) GenerateInode(parentInode uint64, name string) uint64 {
 }
 
 func (cfs CFS) newUniqueID() (id uint64) {
-	if err := cfs.db.QueryRow(`SELECT experimental_unique_int()`).Scan(&id); err != nil {
+	if err := cfs.db.QueryRow(`SELECT unique_rowid()`).Scan(&id); err != nil {
 		panic(err)
 	}
 	return

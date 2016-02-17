@@ -88,15 +88,15 @@ type Node struct {
 }
 
 // convenience functions to query the mode.
-func (n Node) isDir() bool {
+func (n *Node) isDir() bool {
 	return n.Mode.IsDir()
 }
 
-func (n Node) isRegular() bool {
+func (n *Node) isRegular() bool {
 	return n.Mode.IsRegular()
 }
 
-func (n Node) isSymlink() bool {
+func (n *Node) isSymlink() bool {
 	return n.Mode&os.ModeSymlink != 0
 }
 

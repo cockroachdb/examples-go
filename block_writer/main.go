@@ -32,7 +32,7 @@ import (
 	"time"
 
 	_ "github.com/cockroachdb/cockroach/sql/driver"
-	"github.com/cockroachdb/cockroach/util/uuid"
+	"github.com/satori/go.uuid"
 )
 
 const (
@@ -67,7 +67,7 @@ func newBlockWriter(db *sql.DB) blockWriter {
 	source := rand.NewSource(int64(time.Now().UnixNano()))
 	return blockWriter{
 		db:   db,
-		id:   uuid.NewUUID4().String(),
+		id:   uuid.NewV4().String(),
 		rand: rand.New(source),
 	}
 }

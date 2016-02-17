@@ -15,8 +15,8 @@ Run against an existing cockroach node or cluster.
 #### Development node
 ```
 # Build cockroach binary from https://github.com/cockroachdb/cockroach
-# Start it in dev mode (listens on localhost:26257)
-./cockroach start --dev
+# Start it in insecure mode (listens on localhost:26257)
+./cockroach start --insecure
 
 # Build fakerealtime example.
 # Start it with:

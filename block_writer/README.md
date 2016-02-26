@@ -10,23 +10,12 @@ trigger range splits and rebalances.
 
 Run against an existing cockroach node or cluster.
 
-#### Development node
-```
-# Build cockroach binary from https://github.com/cockroachdb/cockroach
-# Start it in dev mode (listens on localhost:26257)
-./cockroach start --dev
-
-# Build block_writer example.
-# Start it with:
-./block_writer http://localhost:26257
-```
-
 #### Insecure node or cluster
 ```
 # Launch your node or cluster in insecure mode (with --insecure passed to cockroach).
 # Find a reachable address: [mycockroach:26257].
 # Run the example with:
-./block_writer http://mycockroach:26257
+./block_writer postgres://root@mycockroach:26257?sslmode=disable
 ```
 
 #### Secure node or cluster
@@ -34,5 +23,5 @@ Run against an existing cockroach node or cluster.
 # Launch your node or cluster in secure mode with certificates in [mycertsdir]
 # Find a reachable address:[mycockroach:26257].
 # Run the example with:
-./block_writer https://mycockroach:26257/?certs=mycertsdir
+./block_writer "postgres://root@mycockroach:26257?sslcert=mycertsdir/root.client.crt&sslkey=mycertsdir/root.client.key"
 ```

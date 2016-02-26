@@ -31,7 +31,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/cockroachdb/cockroach/sql/driver"
+	_ "github.com/lib/pq"
+
 	"github.com/satori/go.uuid"
 )
 
@@ -106,31 +107,17 @@ func setupDatabase(dbURL string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Remove database from parsedUrl
-	q := parsedURL.Query()
-	q.Del("database")
-	parsedURL.RawQuery = q.Encode()
+	parsedURL.Path = "datablocks"
 
 	// Open connection to server and create a database.
-	db, err := sql.Open("cockroach", parsedURL.String())
+	db, err := sql.Open("postgres", parsedURL.String())
 	if err != nil {
 		return nil, err
 	}
 	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS datablocks"); err != nil {
 		return nil, err
 	}
-	if err := db.Close(); err != nil {
-		log.Fatal(err)
-	}
 
-	// Open connection directly to the new database.
-	q.Add("database", "datablocks")
-	parsedURL.RawQuery = q.Encode()
-	db, err = sql.Open("cockroach", parsedURL.String())
-	if err != nil {
-		return nil, err
-	}
 	// Allow a maximum of concurrency+1 connections to the database.
 	db.SetMaxOpenConns(*concurrency + 1)
 

@@ -27,12 +27,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/lib/pq"
-
-	_ "github.com/cockroachdb/cockroach/sql/driver"
+	_ "github.com/lib/pq"
 )
 
-var dbDriver = flag.String("driver", "cockroach", "DB driver to use.")
 var maxTransfer = flag.Int("max-transfer", 999, "Maximum amount to transfer in one transaction.")
 var numAccounts = flag.Int("num-accounts", 999, "Number of accounts.")
 var concurrency = flag.Int("concurrency", 5, "Number of concurrent actors moving money.")
@@ -106,9 +103,9 @@ UPDATE accounts
 			startWrite := time.Now()
 			if fromBalance >= amount {
 				update := `UPDATE accounts
-  SET balance = CASE id WHEN $1 THEN $3 WHEN $2 THEN $4 END
+  SET balance = CASE id WHEN $1 THEN $3::int WHEN $2 THEN $4::int END
   WHERE id IN ($1, $2)`
-				if _, err = tx.Exec(update, to, from, toBalance+amount, fromBalance-amount, from); err != nil {
+				if _, err = tx.Exec(update, to, from, toBalance+amount, fromBalance-amount); err != nil {
 					log.Print(err)
 					if err = tx.Rollback(); err != nil {
 						log.Fatal(err)
@@ -158,55 +155,20 @@ func main() {
 
 	dbURL := flag.Arg(0)
 
-	isPostgres := false
-	var db *sql.DB
-	var err error
-	var parsedURL *url.URL
-
-	if *dbDriver == "postgres" {
-		isPostgres = true
-	} else if *dbDriver != "cockroach" {
-		log.Fatal("--driver only supports \"cockroach\" and \"postgres\"")
-	}
-
-	if parsedURL, err = url.Parse(dbURL); err != nil {
+	parsedURL, err := url.Parse(dbURL)
+	if err != nil {
 		log.Fatal(err)
 	}
+	parsedURL.Path = "bank"
 
-	if isPostgres {
-		if db, err = sql.Open("postgres", parsedURL.String()); err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		if db, err = sql.Open("cockroach", parsedURL.String()); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	if _, err := db.Exec("CREATE DATABASE bank"); err != nil {
-		if pqErr, ok := err.(*pq.Error); isPostgres && (!ok || pqErr.Code.Name() != "duplicate_database") {
-			log.Fatal(err)
-		}
-	}
-	if err := db.Close(); err != nil {
+	db, err := sql.Open("postgres", parsedURL.String())
+	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 
-	// Open db client with database settings.
-	if isPostgres {
-		q := parsedURL.Query()
-		q.Set("dbname", "bank")
-		parsedURL.RawQuery = q.Encode()
-		if db, err = sql.Open("postgres", parsedURL.String()); err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		q := parsedURL.Query()
-		q.Set("database", "bank")
-		parsedURL.RawQuery = q.Encode()
-		if db, err = sql.Open("cockroach", parsedURL.String()); err != nil {
-			log.Fatal(err)
-		}
+	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS bank"); err != nil {
+		log.Fatal(err)
 	}
 
 	// concurrency + 1, for this thread and the "concurrency" number of

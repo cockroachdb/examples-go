@@ -156,7 +156,7 @@ func (w writer) writeMessage() error {
 		}
 		newMsgID := maxMsgID.Int64 + 1
 
-		row = txn.QueryRow(`select max(update_id) from fakerealtime.updates`, channel)
+		row = txn.QueryRow(`select max(update_id) from fakerealtime.updates`)
 		var maxUpdateID sql.NullInt64
 		if err := row.Scan(&maxUpdateID); err != nil {
 			_ = txn.Rollback()

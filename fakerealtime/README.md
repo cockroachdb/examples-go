@@ -12,23 +12,12 @@ about recently-updated channels.
 
 Run against an existing cockroach node or cluster.
 
-#### Development node
-```
-# Build cockroach binary from https://github.com/cockroachdb/cockroach
-# Start it in dev mode (listens on localhost:26257)
-./cockroach start --dev
-
-# Build fakerealtime example.
-# Start it with:
-./fakerealtime http://localhost:26257
-```
-
 #### Insecure node or cluster
 ```
 # Launch your node or cluster in insecure mode (with --insecure passed to cockroach).
 # Find a reachable address: [mycockroach:26257].
 # Run the example with:
-./fakerealtime http://mycockroach:26257
+./fakerealtime postgres://root@mycockroach:26257?sslmode=disable
 ```
 
 #### Secure node or cluster
@@ -36,5 +25,5 @@ Run against an existing cockroach node or cluster.
 # Launch your node or cluster in secure mode with certificates in [mycertsdir]
 # Find a reachable address:[mycockroach:26257].
 # Run the example with:
-./fakerealtime https://mycockroach:26257/?certs=mycertsdir
+./fakerealtime "postgres://root@mycockroach:26257?sslcert=mycertsdir/root.client.crt&sslkey=mycertsdir/root.client.key"
 ```

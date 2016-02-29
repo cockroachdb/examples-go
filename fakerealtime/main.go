@@ -56,7 +56,8 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/cockroachdb/cockroach/sql/driver"
+	_ "github.com/lib/pq"
+
 	"github.com/montanaflynn/stats"
 )
 
@@ -156,7 +157,7 @@ func (w writer) writeMessage() error {
 		}
 		newMsgID := maxMsgID.Int64 + 1
 
-		row = txn.QueryRow(`select max(update_id) from fakerealtime.updates`, channel)
+		row = txn.QueryRow(`select max(update_id) from fakerealtime.updates`)
 		var maxUpdateID sql.NullInt64
 		if err := row.Scan(&maxUpdateID); err != nil {
 			_ = txn.Rollback()
@@ -194,8 +195,6 @@ var usage = func() {
 func main() {
 	flag.Usage = usage
 
-	var dbDriver string
-	flag.StringVar(&dbDriver, "driver", "cockroach", "database driver to use")
 	numChannels := flag.Int("num-channels", 100, "number of channels")
 	numWriters := flag.Int("num-writers", 2, "number of writers")
 	flag.Parse()
@@ -207,7 +206,7 @@ func main() {
 
 	dbURL := flag.Arg(0)
 
-	db, err := sql.Open(dbDriver, dbURL)
+	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}

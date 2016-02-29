@@ -176,6 +176,7 @@ func main() {
 	}
 
 	lastNow := time.Now()
+	start := lastNow
 	var lastNumDumps uint64
 	writers := make([]blockWriter, *concurrency)
 
@@ -190,7 +191,13 @@ func main() {
 		now := time.Now()
 		elapsed := time.Since(lastNow)
 		dumps := atomic.LoadUint64(&numBlocks)
-		log.Printf("%d dumps were executed at %.1f/second (%d total errors)", (dumps - lastNumDumps), float64(dumps-lastNumDumps)/elapsed.Seconds(), numErr)
+		fmt.Printf("%6s: %6.1f/sec",
+			time.Duration(time.Since(start).Seconds()+0.5)*time.Second,
+			float64(dumps-lastNumDumps)/elapsed.Seconds())
+		if numErr > 0 {
+			fmt.Printf(" (%d total errors)\n", numErr)
+		}
+		fmt.Printf("\n")
 		for {
 			select {
 			case err := <-errCh:

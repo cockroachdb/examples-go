@@ -25,6 +25,7 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"runtime/pprof"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -35,12 +36,14 @@ var numAccounts = flag.Int("num-accounts", 999, "Number of accounts.")
 var concurrency = flag.Int("concurrency", 5, "Number of concurrent actors moving money.")
 var transferStyle = flag.String("transfer-style", "txn", "\"single-stmt\" or \"txn\"")
 var balanceCheckInterval = flag.Duration("balance-check-interval", 1*time.Second, "Interval of balance check.")
+var cpuprofile = flag.String("cpuprofile", "", "Write cpu profile to file.")
+var cpuprofileInterval = flag.Duration("cpuprofile-interval", 10*time.Second, "Interval of cpu profiling.")
 
 type measurement struct {
 	read, write, total time.Duration
 }
 
-func moveMoney(db *sql.DB, readings chan measurement) {
+func moveMoney(db *sql.DB, readings chan<- measurement) {
 	for {
 		from, to := rand.Intn(*numAccounts), rand.Intn(*numAccounts)
 		if from == to {
@@ -191,6 +194,15 @@ func main() {
 
 	verifyBank(db)
 
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
 	lastNow := time.Now()
 	readings := make(chan measurement, 10000)
 
@@ -198,6 +210,7 @@ func main() {
 		go moveMoney(db, readings)
 	}
 
+	times := int((*cpuprofileInterval) / (*balanceCheckInterval))
 	for range time.NewTicker(*balanceCheckInterval).C {
 		now := time.Now()
 		elapsed := time.Since(lastNow)
@@ -216,5 +229,11 @@ func main() {
 			log.Printf("read time: %v, write time: %v, txn time: %v", aggr.read/d, aggr.write/d, aggr.total/d)
 		}
 		verifyBank(db)
+		if *cpuprofile != "" {
+			times--
+			if times <= 0 {
+				break
+			}
+		}
 	}
 }

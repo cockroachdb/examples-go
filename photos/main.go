@@ -69,7 +69,7 @@ type Context struct {
 }
 
 var ctx = Context{
-	DBUrl:    "postgresql://root@localhost:15432/?sslmode=disable",
+	DBUrl:    "postgresql://root@localhost:26257/photos?sslmode=disable",
 	NumUsers: 1,
 }
 
@@ -83,7 +83,7 @@ Users can author comments on any photos. User actions are simulated
 using an exponential distribution on user IDs, so lower IDs see
 more activity than high ones.
 `,
-	Example: `  photos --db=<URL>`,
+	Example: `  photos --db=postgresql://root@localhost:26257/photos?sslmode=disable`,
 	RunE:    runLoad,
 }
 
@@ -108,7 +108,6 @@ func runLoad(c *cobra.Command, args []string) error {
 
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, os.Kill)
-	// TODO(spencer): move this behind a build tag.
 	signal.Notify(signalCh, syscall.SIGTERM)
 
 	// Block until one of the signals above is received or the stopper
@@ -177,7 +176,7 @@ func Run(args []string) error {
 
 func main() {
 	if err := Run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "failed running command %q: %v", os.Args[1:], err)
+		fmt.Fprintf(os.Stderr, "failed running command %q: %v\n", os.Args[1:], err)
 		os.Exit(1)
 	}
 }

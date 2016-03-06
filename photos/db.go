@@ -28,10 +28,13 @@ import (
 )
 
 const (
+	// TODO(spencer): update the CREATE DATABASE statement in the schema
+	//   to pull out the database specified in the DB URL and use it instead
+	//   of "photos" below.
 	photosSchema = `
 CREATE DATABASE IF NOT EXISTS photos;
 
-CREATE TABLE IF NOT EXISTS photos.users (
+CREATE TABLE IF NOT EXISTS users (
   id           INT,
   photoCount   INT,
   commentCount INT,
@@ -41,7 +44,7 @@ CREATE TABLE IF NOT EXISTS photos.users (
   PRIMARY KEY (id)
 );
 
-CREATE TABLE IF NOT EXISTS photos.photos (
+CREATE TABLE IF NOT EXISTS photos (
   id           BYTES DEFAULT EXPERIMENTAL_UUID_V4(),
   userID       INT,
   commentCount INT,
@@ -53,9 +56,9 @@ CREATE TABLE IF NOT EXISTS photos.photos (
   PRIMARY KEY (id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS photosByUserID ON photos.photos (userID, timestamp);
+CREATE UNIQUE INDEX IF NOT EXISTS photosByUserID ON photos (userID, timestamp);
 
-CREATE TABLE IF NOT EXISTS photos.comments (
+CREATE TABLE IF NOT EXISTS comments (
   photoID   BYTES,
   commentID BYTES DEFAULT EXPERIMENTAL_UUID_V4(),
   userID    INT,
@@ -65,7 +68,7 @@ CREATE TABLE IF NOT EXISTS photos.comments (
   PRIMARY KEY (photoID, commentID)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS commentsByPhotoID ON photos.comments (photoID, timestamp);
+CREATE UNIQUE INDEX IF NOT EXISTS commentsByPhotoID ON comments (photoID, timestamp);
 `
 )
 
@@ -133,7 +136,8 @@ var noUserErr = errors.New("no user found")
 func userExists(tx *sql.Tx, userID int) (bool, error) {
 	var id int
 	const selectSQL = `
-SELECT id FROM photos.users WHERE id = $1`
+SELECT id FROM users WHERE id = $1;
+`
 	err := tx.QueryRow(selectSQL, userID).Scan(&id)
 	switch err {
 	case sql.ErrNoRows:
@@ -148,26 +152,15 @@ SELECT id FROM photos.users WHERE id = $1`
 // findClosestUserByID selects the first user which exists with
 // id >= userID. Returns the found user ID or an error.
 func findClosestUserByID(tx *sql.Tx, userID int) (int, error) {
-	// TODO(spencer): enable finding closest user when DB becomes more performant.
-	/*
-			var id int
-			const selectSQL = `
-		SELECT id FROM photos.users WHERE id >= $1 LIMIT 1;`
-			err := tx.QueryRow(selectSQL, userID).Scan(&id)
-			switch err {
-			case nil:
-				return id, nil
-			default:
-				return 0, err
-			}
-	*/
-	exists, err := userExists(tx, userID)
-	if err != nil {
-		return 0, err
-	} else if !exists {
+	var id int
+	const selectSQL = `
+SELECT id FROM users WHERE id >= $1 ORDER BY id LIMIT 1;
+`
+	err := tx.QueryRow(selectSQL, userID).Scan(&id)
+	if err == sql.ErrNoRows {
 		return 0, noUserErr
 	}
-	return userID, nil
+	return id, err
 }
 
 // createUser creates a new user with random name and address strings.
@@ -177,7 +170,7 @@ func createUser(tx *sql.Tx, userID int) error {
 		return err
 	}
 	const insertSQL = `
-INSERT INTO photos.users VALUES ($1, 0, 0, $2, $3);
+INSERT INTO users VALUES ($1, 0, 0, $2, $3);
 `
 	const minNameLen = 1
 	const maxNameLen = 30
@@ -199,7 +192,7 @@ func createPhoto(tx *sql.Tx, userID int) error {
 	}
 
 	const insertSQL = `
-INSERT INTO photos.photos VALUES (DEFAULT, $1, 0, $2, $3, $4, NOW());
+INSERT INTO photos VALUES (DEFAULT, $1, 0, $2, $3, $4, NOW());
 `
 	const minCaptionLen = 10
 	const maxCaptionLen = 200
@@ -211,7 +204,7 @@ INSERT INTO photos.photos VALUES (DEFAULT, $1, 0, $2, $3, $4, NOW());
 	}
 
 	const updateSQL = `
-UPDATE photos.users SET photoCount = photoCount + 1 WHERE id = $1;
+UPDATE users SET photoCount = photoCount + 1 WHERE id = $1;
 `
 	if _, err := tx.Exec(updateSQL, userID); err != nil {
 		return err
@@ -230,7 +223,7 @@ func createComment(tx *sql.Tx, userID int) error {
 	authorID := rand.Intn(userID) + 1
 
 	const insertSQL = `
-INSERT INTO photos.comments VALUES ($1, DEFAULT, $2, $3, NOW());
+INSERT INTO comments VALUES ($1, DEFAULT, $2, $3, NOW());
 `
 	const minMessageLen = 32
 	const maxMessageLen = 1024
@@ -241,14 +234,14 @@ INSERT INTO photos.comments VALUES ($1, DEFAULT, $2, $3, NOW());
 	}
 
 	const updatePhotoSQL = `
-UPDATE photos.photos SET commentCount = commentCount + 1 WHERE id = $1;
+UPDATE photos SET commentCount = commentCount + 1 WHERE id = $1;
 `
 	if _, err := tx.Exec(updatePhotoSQL, photoID); err != nil {
 		return err
 	}
 
 	const updateUserSQL = `
-UPDATE photos.users SET commentCount = commentCount + 1 WHERE id = $1;
+UPDATE users SET commentCount = commentCount + 1 WHERE id = $1;
 `
 	if _, err := tx.Exec(updateUserSQL, authorID); err != nil {
 		return err
@@ -266,7 +259,7 @@ func listPhotos(tx *sql.Tx, userID int, photoIDs *[][]byte) error {
 		return err
 	}
 	const selectSQL = `
-SELECT id, caption, commentCount, latitude, longitude, timestamp FROM photos.photos WHERE userID = $1 ORDER BY timestamp DESC LIMIT 100`
+SELECT id, caption, commentCount, latitude, longitude, timestamp FROM photos WHERE userID = $1 ORDER BY timestamp DESC LIMIT 100`
 	rows, err := tx.Query(selectSQL, userID)
 	switch {
 	case err == sql.ErrNoRows:
@@ -323,7 +316,7 @@ func listComments(tx *sql.Tx, userID int, commentIDs *[][]byte) ([]byte, error) 
 		return nil, err
 	}
 	const selectSQL = `
-SELECT commentID, userID, message, timestamp FROM photos.comments WHERE photoID = $1 ORDER BY timestamp DESC LIMIT 100`
+SELECT commentID, userID, message, timestamp FROM comments WHERE photoID = $1 ORDER BY timestamp DESC LIMIT 100`
 	rows, err := tx.Query(selectSQL, photoID)
 	switch {
 	case err == sql.ErrNoRows:
@@ -378,7 +371,7 @@ func updatePhoto(tx *sql.Tx, userID int) error {
 	}
 
 	const updatePhotoSQL = `
-UPDATE photos.photos SET caption = $1 WHERE id = $2;
+UPDATE photos SET caption = $1 WHERE id = $2;
 `
 	const minCaptionLen = 10
 	const maxCaptionLen = 200
@@ -396,7 +389,7 @@ func updateComment(tx *sql.Tx, userID int) error {
 	}
 
 	const updateCommentSQL = `
-UPDATE photos.comments SET message = $1 WHERE photoID = $2 AND commentID = $3;
+UPDATE comments SET message = $1 WHERE photoID = $2 AND commentID = $3;
 `
 	const minMessageLen = 10
 	const maxMessageLen = 200
@@ -413,14 +406,14 @@ func deletePhoto(tx *sql.Tx, userID int) error {
 		return err
 	}
 	const deletePhotoSQL = `
-DELETE FROM photos.photos WHERE id = $1;
+DELETE FROM photos WHERE id = $1;
 `
 	if _, err := tx.Exec(deletePhotoSQL, photoID); err != nil {
 		return err
 	}
 
 	const updateSQL = `
-UPDATE photos.users SET photoCount = photoCount - 1 WHERE id = $1;
+UPDATE users SET photoCount = photoCount - 1 WHERE id = $1;
 `
 	if _, err := tx.Exec(updateSQL, userID); err != nil {
 		return err
@@ -434,21 +427,21 @@ func deleteComment(tx *sql.Tx, userID int) error {
 		return err
 	}
 	const deleteCommentSQL = `
-DELETE FROM photos.comments WHERE photoID = $1 AND commentID = $2;
+DELETE FROM comments WHERE photoID = $1 AND commentID = $2;
 `
 	if _, err := tx.Exec(deleteCommentSQL, photoID, commentID); err != nil {
 		return err
 	}
 
 	const updatePhotoSQL = `
-UPDATE photos.photos SET commentCount = commentCount - 1 WHERE id = $1;
+UPDATE photos SET commentCount = commentCount - 1 WHERE id = $1;
 `
 	if _, err := tx.Exec(updatePhotoSQL, photoID); err != nil {
 		return err
 	}
 
 	const updateUserSQL = `
-UPDATE photos.users SET commentCount = commentCount - 1 WHERE id = $1;
+UPDATE users SET commentCount = commentCount - 1 WHERE id = $1;
 `
 	if _, err := tx.Exec(updateUserSQL, userID); err != nil {
 		return err

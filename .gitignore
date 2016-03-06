@@ -21,6 +21,8 @@ _cgo_export.*
 
 _testmain.go
 
+photos/photos
+
 *.exe
 *.test
 *.prof

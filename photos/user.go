@@ -105,13 +105,17 @@ func randomOp() *opDesc {
 	return ops[len(ops)-1]
 }
 
-// startUser simulates a stream of user events until the stopper
-// indicates it's time to exit.
-func startUser(ctx Context, stopper *stop.Stopper) {
+func startStats(stopper *stop.Stopper) {
 	var lastOps int
 	ticker := time.NewTicker(statsInterval)
 	for {
 		select {
+		case <-ticker.C:
+			stats.Lock()
+			opsPerSec := float64(stats.totalOps-lastOps) / float64(statsInterval/1E9)
+			log.Printf("%d ops, %d no-user, %d errs (%.2f/s)", stats.totalOps, stats.noUserOps, stats.failedOps, opsPerSec)
+			lastOps = stats.totalOps
+			stats.Unlock()
 		case <-stopper.ShouldStop():
 			stats.Lock()
 			if !stats.computing {
@@ -120,31 +124,33 @@ func startUser(ctx Context, stopper *stop.Stopper) {
 			}
 			stats.Unlock()
 			return
-		case <-ticker.C:
-			stats.Lock()
-			opsPerSec := float64(stats.totalOps-lastOps) / float64(statsInterval/1E9)
-			log.Printf("%d ops, %d no-user, %d errs (%.2f/s)", stats.totalOps, stats.noUserOps, stats.failedOps, opsPerSec)
-			lastOps = stats.totalOps
-			stats.Unlock()
-		default:
-			userID := 1 + int(rand.ExpFloat64()/rate)
-			op := randomOp()
+		}
+	}
+}
 
-			stopper.RunTask(func() {
-				err := runUserOp(ctx, userID, op.typ)
-				stats.Lock()
-				stats.hist.RecordValue(int64(userID))
-				stats.totalOps++
-				stats.opCounts[op.typ]++
-				switch {
-				case err == noUserErr:
-					stats.noUserOps++
-				case err != nil:
-					stats.failedOps++
-					log.Printf("failed to run %s op for %d: %s", op.name, userID, err)
-				}
-				stats.Unlock()
-			})
+// startUser simulates a stream of user events until the stopper
+// indicates it's time to exit.
+func startUser(ctx Context, stopper *stop.Stopper) {
+	for {
+		userID := 1 + int(rand.ExpFloat64()/rate)
+		op := randomOp()
+
+		if !stopper.RunTask(func() {
+			err := runUserOp(ctx, userID, op.typ)
+			stats.Lock()
+			stats.hist.RecordValue(int64(userID))
+			stats.totalOps++
+			stats.opCounts[op.typ]++
+			switch {
+			case err == noUserErr:
+				stats.noUserOps++
+			case err != nil:
+				stats.failedOps++
+				log.Printf("failed to run %s op for %d: %s", op.name, userID, err)
+			}
+			stats.Unlock()
+		}) {
+			return
 		}
 	}
 }

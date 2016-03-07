@@ -97,9 +97,12 @@ func runLoad(c *cobra.Command, args []string) error {
 	if err := initSchema(db); err != nil {
 		log.Fatal(err)
 	}
+	ctx.DB = db
 
 	stopper := stop.NewStopper()
-	ctx.DB = db
+	stopper.RunWorker(func() {
+		startStats(stopper)
+	})
 	for i := 0; i < ctx.NumUsers; i++ {
 		stopper.RunWorker(func() {
 			startUser(ctx, stopper)

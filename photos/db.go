@@ -258,8 +258,11 @@ func listPhotos(tx *sql.Tx, userID int, photoIDs *[][]byte) error {
 	if err != nil {
 		return err
 	}
-	const selectSQL = `
-SELECT id, caption, commentCount, latitude, longitude, timestamp FROM photos WHERE userID = $1 ORDER BY timestamp DESC LIMIT 100`
+	const selectSQL = `SELECT commentID, userID, message, timestamp FROM comments ` +
+		`WHERE photoID = $1::bytea AND commentID IN ` +
+		`(SELECT commentID FROM comments WHERE photoID = $1::bytea ORDER BY timestamp DESC LIMIT 100)` +
+		`ORDER BY timestamp DESC`
+
 	rows, err := tx.Query(selectSQL, userID)
 	switch {
 	case err == sql.ErrNoRows:

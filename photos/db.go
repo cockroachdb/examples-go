@@ -315,8 +315,10 @@ func listComments(tx *sql.Tx, userID int, commentIDs *[][]byte) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	const selectSQL = `
-SELECT commentID, userID, message, timestamp FROM comments WHERE photoID = $1 ORDER BY timestamp DESC LIMIT 100`
+	const selectSQL = `SELECT commentID, userID, message, timestamp FROM comments ` +
+		`WHERE photoID = $1 AND commentID IN ` +
+		`(SELECT commentID FROM comments WHERE photoID = $1 ORDER BY timestamp DESC LIMIT 100)` +
+		`ORDER BY timestamp DESC`
 	rows, err := tx.Query(selectSQL, photoID)
 	switch {
 	case err == sql.ErrNoRows:

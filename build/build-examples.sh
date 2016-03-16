@@ -14,6 +14,7 @@ set -euo pipefail
 if [ "${1-}" = "docker" ]; then
     time make deps
     time make STATIC=1 block_writer
+    time make STATIC=1 photos
 
     # Make sure the created binary is statically linked.  Seems
     # awkward to do this programmatically, but this should work.

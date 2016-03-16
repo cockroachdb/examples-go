@@ -35,7 +35,7 @@ func initTestDB(t *testing.T) (*server.TestServer, *sql.DB) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Could not start server: %v", err)
 	}
-	url := "postgresql://root@" + s.PGAddr() + "?sslmode=disable"
+	url := "postgresql://root@" + s.ServingAddr() + "?sslmode=disable"
 
 	db, err := sql.Open("postgres", url)
 	if err != nil {

@@ -40,3 +40,4 @@ function push_one_binary {
 }
 
 push_one_binary block_writer/block_writer
+push_one_binary photos/photos

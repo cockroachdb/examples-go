@@ -48,7 +48,7 @@ deps:
 	$(GO) get -d ./...
 
 .PHONY: build
-build: deps block_writer fakerealtime filesystem sql_bank kv_bank
+build: deps block_writer fakerealtime filesystem sql_bank kv_bank photos
 
 .PHONY: block_writer
 block_writer:
@@ -69,6 +69,10 @@ sql_bank:
 .PHONY: kv_bank
 kv_bank:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o bank/kv_bank/kv_bank ./bank/kv_bank
+
+.PHONY: photos
+photos:
+	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o photos/photos ./photos
 
 .PHONY: check
 check:

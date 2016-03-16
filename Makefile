@@ -40,15 +40,16 @@ all: build test check
 
 .PHONY: test
 test:
-	$(GO) test ./...
+	$(GO) test -v -i ./...
+	$(GO) test -v ./...
 
 .PHONY: deps
 deps:
 	$(GO) get -d bazil.org/fuse
-	$(GO) get -d ./...
+	$(GO) get -d -t ./...
 
 .PHONY: build
-build: deps block_writer fakerealtime filesystem sql_bank kv_bank photos
+build: deps block_writer fakerealtime filesystem bank photos
 
 .PHONY: block_writer
 block_writer:
@@ -62,13 +63,9 @@ fakerealtime:
 filesystem:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o filesystem/filesystem ./filesystem
 
-.PHONY: sql_bank
-sql_bank:
-	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o bank/sql_bank/sql_bank ./bank/sql_bank
-
-.PHONY: kv_bank
-kv_bank:
-	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o bank/kv_bank/kv_bank ./bank/kv_bank
+.PHONY: bank
+bank:
+	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o bank/bank ./bank
 
 .PHONY: photos
 photos:

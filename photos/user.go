@@ -44,7 +44,6 @@ const (
 	updateCommentOp
 	deletePhotoOp
 	deleteCommentOp
-	lastOp
 )
 
 type opDesc struct {
@@ -138,11 +137,11 @@ func startUser(ctx Context, stopper *stop.Stopper) {
 		if !stopper.RunTask(func() {
 			err := runUserOp(ctx, userID, op.typ)
 			stats.Lock()
-			stats.hist.RecordValue(int64(userID))
+			_ = stats.hist.RecordValue(int64(userID))
 			stats.totalOps++
 			stats.opCounts[op.typ]++
 			switch {
-			case err == noUserErr:
+			case err == errNoUser:
 				stats.noUserOps++
 			case err != nil:
 				stats.failedOps++
@@ -182,7 +181,6 @@ func runUserOp(ctx Context, userID, opType int) error {
 		default:
 			return util.Errorf("unsupported op type: %d", opType)
 		}
-		return nil
 	})
 }
 

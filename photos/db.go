@@ -130,7 +130,7 @@ func randString(n int) string {
 	return string(b)
 }
 
-var noUserErr = errors.New("no user found")
+var errNoUser = errors.New("no user found")
 
 // userExists looks up a user by ID.
 func userExists(tx *sql.Tx, userID int) (bool, error) {
@@ -158,7 +158,7 @@ SELECT id FROM users WHERE id >= $1 ORDER BY id LIMIT 1;
 `
 	err := tx.QueryRow(selectSQL, userID).Scan(&id)
 	if err == sql.ErrNoRows {
-		return 0, noUserErr
+		return 0, errNoUser
 	}
 	return id, err
 }
@@ -267,7 +267,7 @@ SELECT id, caption, commentCount, latitude, longitude, timestamp FROM photos WHE
 	case err != nil:
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	// Count and process the result set so we make sure work is done to
 	// stream the results.
 	var count int
@@ -326,7 +326,7 @@ func listComments(tx *sql.Tx, userID int, commentIDs *[][]byte) ([]byte, error) 
 	case err != nil:
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	// Count and process the result set so we make sure work is done to
 	// stream the results.
 	var count int

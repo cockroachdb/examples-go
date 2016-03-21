@@ -31,9 +31,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/lib/pq"
-
 	"github.com/satori/go.uuid"
+	// Import postgres driver.
+	_ "github.com/cockroachdb/pq"
 )
 
 const (

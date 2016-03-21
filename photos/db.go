@@ -24,7 +24,8 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/util"
-	_ "github.com/lib/pq"
+	// Import postgres driver.
+	_ "github.com/cockroachdb/pq"
 )
 
 const (

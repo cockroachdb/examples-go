@@ -27,7 +27,8 @@ import (
 	"os"
 	"time"
 
-	_ "github.com/lib/pq"
+	// Import postgres driver.
+	_ "github.com/cockroachdb/pq"
 )
 
 var maxTransfer = flag.Int("max-transfer", 999, "Maximum amount to transfer in one transaction.")

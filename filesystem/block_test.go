@@ -35,7 +35,10 @@ func initTestDB(t *testing.T) (*testserver.TestServer, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts.Start()
+	err = ts.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	url := ts.WaitForPGURL(time.Second)
 	if url == nil {

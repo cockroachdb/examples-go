@@ -1,6 +1,6 @@
 #!/bin/bash
 # Push binaries to AWS.
-# This is run by circle-ci after successful docker push.
+# This is run by circle-ci after successful build/test.
 #
 # Requisites:
 # - binaries must be statically linked by running build/build-static-binaries.sh

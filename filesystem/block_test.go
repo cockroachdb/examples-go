@@ -21,34 +21,43 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"log"
 	"reflect"
 	"testing"
+	"time"
 
-	"github.com/cockroachdb/cockroach/server"
+	"github.com/cockroachdb/cockroach-go/testserver"
 	"github.com/cockroachdb/cockroach/util/randutil"
 )
 
-func initTestDB(t *testing.T) (*server.TestServer, *sql.DB) {
-	s := &server.TestServer{}
-	s.Ctx = server.NewTestContext()
-	s.Ctx.Insecure = true
-	if err := s.Start(); err != nil {
-		t.Fatalf("Could not start server: %v", err)
+func initTestDB(t *testing.T) (*testserver.TestServer, *sql.DB) {
+	ts, err := testserver.NewTestServer()
+	if err != nil {
+		t.Fatal(err)
 	}
-	url := "postgresql://root@" + s.ServingAddr() + "?sslmode=disable"
+	err = ts.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	db, err := sql.Open("postgres", url)
+	url := ts.WaitForPGURL(time.Second)
+	if url == nil {
+		log.Fatalf("No URL found")
+	}
+	t.Logf("URL: %s", url)
+
+	db, err := sql.Open("postgres", url.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if err := initSchema(db); err != nil {
 		_ = db.Close()
-		s.Stop()
+		ts.Stop()
 		t.Fatal(err)
 	}
 
-	return s, db
+	return ts, db
 }
 
 func getAllBlocks(db *sql.DB, inode uint64) ([]byte, error) {

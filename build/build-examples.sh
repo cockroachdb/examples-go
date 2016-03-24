@@ -6,8 +6,7 @@
 set -eux
 
 time make deps
-time make STATIC=1 block_writer
-time make STATIC=1 photos
-
-strip -S block_writer/block_writer
-strip -S photos/photos
+for proj in bank block_writer fakerealtime filesystem photos; do
+  time make STATIC=1 ${proj}
+  strip -S ${proj}/${proj}
+done

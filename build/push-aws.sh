@@ -39,5 +39,6 @@ function push_one_binary {
   rm -f ${tmpfile}
 }
 
-push_one_binary block_writer/block_writer
-push_one_binary photos/photos
+for proj in bank block_writer fakerealtime filesystem photos; do
+  push_one_binary ${proj}/${prof}
+done

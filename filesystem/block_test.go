@@ -24,7 +24,6 @@ import (
 	"log"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/cockroachdb/cockroach-go/testserver"
 	"github.com/cockroachdb/cockroach/util/randutil"
@@ -40,7 +39,7 @@ func initTestDB(t *testing.T) (*testserver.TestServer, *sql.DB) {
 		t.Fatal(err)
 	}
 
-	url := ts.WaitForPGURL(time.Second)
+	url := ts.PGURL()
 	if url == nil {
 		log.Fatalf("No URL found")
 	}

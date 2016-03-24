@@ -40,5 +40,5 @@ function push_one_binary {
 }
 
 for proj in bank block_writer fakerealtime filesystem photos; do
-  push_one_binary ${proj}/${prof}
+  push_one_binary ${proj}/${proj}
 done

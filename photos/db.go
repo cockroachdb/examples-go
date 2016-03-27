@@ -90,37 +90,6 @@ func dropDatabase(db *sql.DB) error {
 	return err
 }
 
-// execute runs a closure within a transaction. On failure,
-// the transaction is aborted and rolled back; on success,
-// the transaction is committed. If the error string matches
-// CockroachDB's restart directive, the same transaction is
-// re-used to retry executing the closure.
-//
-// NOTE: the supplied exec closure should not have external
-//       side effects beyond changes to the database.
-func executeTxn(db *sql.DB, exec func(*sql.Tx) error) error {
-	tx, err := ctx.DB.Begin()
-	if err != nil {
-		return err
-	}
-	for {
-		if err := exec(tx); err != nil {
-			// TODO(spencer): check error return here and if retry txn is
-			// warranted, continue.
-			/*
-				if err.Error().Matches("retry cockroachdb txn") {
-					if _, err = tx.Exec(`RETRY TRANSACTION;`); err == nil {
-						continue
-					}
-				}
-			*/
-			_ = tx.Rollback()
-			return err
-		}
-		return tx.Commit()
-	}
-}
-
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 func randString(n int) string {

@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
-	"log"
 	"reflect"
 	"testing"
 
@@ -29,34 +28,15 @@ import (
 	"github.com/cockroachdb/cockroach/util/randutil"
 )
 
-func initTestDB(t *testing.T) (*testserver.TestServer, *sql.DB) {
-	ts, err := testserver.NewTestServer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = ts.Start()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	url := ts.PGURL()
-	if url == nil {
-		log.Fatalf("No URL found")
-	}
-	t.Logf("URL: %s", url)
-
-	db, err := sql.Open("postgres", url.String())
-	if err != nil {
-		t.Fatal(err)
-	}
+func initTestDB(t *testing.T) (*sql.DB, func()) {
+	db, stop := testserver.NewDBForTest(t)
 
 	if err := initSchema(db); err != nil {
-		_ = db.Close()
-		ts.Stop()
+		stop()
 		t.Fatal(err)
 	}
 
-	return ts, db
+	return db, stop
 }
 
 func getAllBlocks(db *sql.DB, inode uint64) ([]byte, error) {
@@ -180,11 +160,9 @@ func tryShrink(db *sql.DB, data []byte, id, newSize uint64) ([]byte, error) {
 }
 
 func TestShrinkGrow(t *testing.T) {
-	s, db := initTestDB(t)
-	defer func() {
-		_ = db.Close()
-		s.Stop()
-	}()
+	db, stop := initTestDB(t)
+	defer stop()
+
 	id := uint64(10)
 
 	var err error
@@ -231,11 +209,9 @@ func TestShrinkGrow(t *testing.T) {
 }
 
 func TestReadWriteBlocks(t *testing.T) {
-	s, db := initTestDB(t)
-	defer func() {
-		_ = db.Close()
-		s.Stop()
-	}()
+	db, stop := initTestDB(t)
+	defer stop()
+
 	id := uint64(10)
 	rng, _ := randutil.NewPseudoRand()
 	length := BlockSize*3 + 500

@@ -24,6 +24,7 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"github.com/cockroachdb/cockroach-go/cdb"
 )
 
 const rootNodeID = 1
@@ -72,67 +73,56 @@ func initSchema(db *sql.DB) error {
 // node: new node
 func (cfs CFS) create(parentID uint64, name string, node *Node) error {
 	inode := node.toJSON()
-	tx, err := cfs.db.Begin()
-	if err != nil {
-		return err
-	}
 	const insertNode = `INSERT INTO fs.inode VALUES ($1, $2)`
-	if _, err := tx.Exec(insertNode, node.ID, inode); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
 	const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
-	if _, err := tx.Exec(insertNamespace, parentID, name, node.ID); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
+
+	err := cdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(insertNode, node.ID, inode); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(insertNamespace, parentID, name, node.ID); err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
 }
 
 // remove removes a node give its name and its parent ID.
 // If 'checkChildren' is true, fails if the node has children.
 func (cfs CFS) remove(parentID uint64, name string, checkChildren bool) error {
-	tx, err := cfs.db.Begin()
-	if err != nil {
-		return err
-	}
+	const lookupSQL = `SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
+	const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
+	const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
+	const deleteBlock = `DELETE FROM fs.block WHERE id = $1`
 
-	// Start by looking up the node ID.
-	const lookupSQL = `
-SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
-
-	var id uint64
-	if err := tx.QueryRow(lookupSQL, parentID, name).Scan(&id); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-
-	// Check if there are any children.
-	if checkChildren {
-		if err := checkIsEmpty(tx, id); err != nil {
-			_ = tx.Rollback()
+	err := cdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+		// Start by looking up the node ID.
+		var id uint64
+		if err := tx.QueryRow(lookupSQL, parentID, name).Scan(&id); err != nil {
 			return err
 		}
-	}
 
-	// Delete all entries.
-	const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
-	if _, err := tx.Exec(deleteNamespace, parentID, name); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
-	if _, err := tx.Exec(deleteInode, id); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	const deleteBlock = `DELETE FROM fs.block WHERE id = $1`
-	if _, err := tx.Exec(deleteBlock, id); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
+		// Check if there are any children.
+		if checkChildren {
+			if err := checkIsEmpty(tx, id); err != nil {
+				return err
+			}
+		}
 
-	return tx.Commit()
+		// Delete all entries.
+		if _, err := tx.Exec(deleteNamespace, parentID, name); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(deleteInode, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(deleteBlock, id); err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
 }
 
 func (cfs CFS) lookup(parentID uint64, name string) (*Node, error) {
@@ -200,68 +190,57 @@ func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) 
 		return nil
 	}
 
-	tx, err := cfs.db.Begin()
-	if err != nil {
-		return err
-	}
-
-	// Lookup source inode.
-	srcObject, err := getInode(tx, oldParentID, oldName)
-	if err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-
-	// Lookup destination inode.
-	destObject, err := getInode(tx, newParentID, newName)
-	if err != nil && err != sql.ErrNoRows {
-		_ = tx.Rollback()
-		return err
-	}
-
-	// Check that the rename is allowed.
-	if err := validateRename(tx, srcObject, destObject); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-
-	// At this point we know the following:
-	// - srcObject is not nil
-	// - destObject may be nil. If not, its inode can be deleted.
-	if destObject == nil {
-		// No new object: use INSERT.
-		const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
-		if _, err := tx.Exec(deleteNamespace, oldParentID, oldName); err != nil {
-			_ = tx.Rollback()
+	const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
+	const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
+	const updateNamespace = `UPDATE fs.namespace SET id = $1 WHERE (parentID, name) = ($2, $3)`
+	const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
+	err := cdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+		// Lookup source inode.
+		srcObject, err := getInode(tx, oldParentID, oldName)
+		if err != nil {
 			return err
 		}
 
-		const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
-		if _, err := tx.Exec(insertNamespace, newParentID, newName, srcObject.ID); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-	} else {
-		// Destination exists.
-		const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
-		if _, err := tx.Exec(deleteNamespace, oldParentID, oldName); err != nil {
-			_ = tx.Rollback()
+		// Lookup destination inode.
+		destObject, err := getInode(tx, newParentID, newName)
+		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
 
-		const updateNamespace = `UPDATE fs.namespace SET id = $1 WHERE (parentID, name) = ($2, $3)`
-		if _, err := tx.Exec(updateNamespace, srcObject.ID, newParentID, newName); err != nil {
-			_ = tx.Rollback()
+		// Check that the rename is allowed.
+		if err := validateRename(tx, srcObject, destObject); err != nil {
 			return err
 		}
 
-		const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
-		if _, err := tx.Exec(deleteInode, destObject.ID); err != nil {
-			_ = tx.Rollback()
-			return err
+		// At this point we know the following:
+		// - srcObject is not nil
+		// - destObject may be nil. If not, its inode can be deleted.
+		if destObject == nil {
+			// No new object: use INSERT.
+			if _, err := tx.Exec(deleteNamespace, oldParentID, oldName); err != nil {
+				return err
+			}
+
+			if _, err := tx.Exec(insertNamespace, newParentID, newName, srcObject.ID); err != nil {
+				return err
+			}
+		} else {
+			// Destination exists.
+			if _, err := tx.Exec(deleteNamespace, oldParentID, oldName); err != nil {
+				return err
+			}
+
+			if _, err := tx.Exec(updateNamespace, srcObject.ID, newParentID, newName); err != nil {
+				return err
+			}
+
+			if _, err := tx.Exec(deleteInode, destObject.ID); err != nil {
+				return err
+			}
 		}
-	}
-	return tx.Commit()
+		return nil
+	})
+	return err
 }
 
 // Root returns the filesystem's root node.

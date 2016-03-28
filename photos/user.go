@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/cockroach-go/cdb"
+	"github.com/cockroachdb/cockroach-go/crdb"
 	"github.com/cockroachdb/cockroach/util"
 	"github.com/cockroachdb/cockroach/util/stop"
 	"github.com/codahale/hdrhistogram"
@@ -158,7 +158,7 @@ func startUser(ctx Context, stopper *stop.Stopper) {
 // runUserOp starts a transaction and creates the user if it doesn't
 // yet exist.
 func runUserOp(ctx Context, userID, opType int) error {
-	return cdb.ExecuteTx(ctx.DB, func(tx *sql.Tx) error {
+	return crdb.ExecuteTx(ctx.DB, func(tx *sql.Tx) error {
 		switch opType {
 		case createUserOp:
 			return createUser(tx, userID)

@@ -54,10 +54,9 @@ CREATE TABLE IF NOT EXISTS photos (
   longitude    FLOAT,
   timestamp    TIMESTAMP,
 
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE INDEX byUserID (userID, timestamp)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS photosByUserID ON photos (userID, timestamp);
 
 CREATE TABLE IF NOT EXISTS comments (
   photoID   BYTES,
@@ -66,11 +65,8 @@ CREATE TABLE IF NOT EXISTS comments (
   message   STRING,
   timestamp TIMESTAMP,
 
-  PRIMARY KEY (photoID, commentID)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS commentsByPhotoID ON comments (photoID, timestamp);
-`
+  PRIMARY KEY (photoID, timestamp, commentID)
+);`
 )
 
 // openDB opens the database connection according to the context.
@@ -286,9 +282,7 @@ func listComments(tx *sql.Tx, userID int, commentIDs *[][]byte) ([]byte, error) 
 		return nil, err
 	}
 	const selectSQL = `SELECT commentID, userID, message, timestamp FROM comments ` +
-		`WHERE photoID = $1 AND commentID IN ` +
-		`(SELECT commentID FROM comments WHERE photoID = $1 ORDER BY timestamp DESC LIMIT 100)` +
-		`ORDER BY timestamp DESC`
+		`WHERE photoID = $1 ORDER BY timestamp DESC LIMIT 100`
 	rows, err := tx.Query(selectSQL, photoID)
 	switch {
 	case err == sql.ErrNoRows:

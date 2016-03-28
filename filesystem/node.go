@@ -27,6 +27,8 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/cockroachdb/cockroach-go/crdb"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"golang.org/x/net/context"
@@ -157,34 +159,21 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 		return nil
 	}
 
-	// Wrap everything inside a transaction.
-	tx, err := n.cfs.db.Begin()
-	if err != nil {
-		log.Print(err)
-		return err
-	}
-
-	// Resize blocks as needed.
-	if err := resizeBlocks(tx, n.ID, n.Size, req.Size); err != nil {
-		log.Print(err)
-		_ = tx.Rollback()
-		return err
-	}
-
-	// Update this node descriptor. Store the current size in case
-	// we need to rollback.
+	// Store the current size in case we need to rollback.
 	originalSize := n.Size
-	n.Size = req.Size
-	if err := updateNode(tx, n); err != nil {
-		log.Print(err)
-		_ = tx.Rollback()
-		// reset our size.
-		n.Size = originalSize
-		return err
-	}
 
-	// All set: commit.
-	if err := tx.Commit(); err != nil {
+	// Wrap everything inside a transaction.
+	err := crdb.ExecuteTx(n.cfs.db, func(tx *sql.Tx) error {
+		// Resize blocks as needed.
+		if err := resizeBlocks(tx, n.ID, n.Size, req.Size); err != nil {
+			return err
+		}
+
+		n.Size = req.Size
+		return updateNode(tx, n)
+	})
+
+	if err != nil {
 		// Reset our size.
 		log.Print(err)
 		n.Size = originalSize
@@ -295,35 +284,28 @@ func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.Write
 		return fuse.Errno(syscall.EFBIG)
 	}
 
-	// Wrap everything inside a transaction.
-	tx, err := n.cfs.db.Begin()
-	if err != nil {
-		log.Print(err)
-		return err
-	}
-
-	// Update blocks. They will be added as needed.
-	if err := write(tx, n.ID, n.Size, uint64(req.Offset), req.Data); err != nil {
-		log.Print(err)
-		_ = tx.Rollback()
-		return err
-	}
-
+	// Store the current size in case we need to rollback.
 	originalSize := n.Size
-	if newSize > originalSize {
-		// This was an append, commit the size change.
-		n.Size = newSize
-		if err := updateNode(tx, n); err != nil {
-			log.Print(err)
-			_ = tx.Rollback()
-			// reset our size.
-			n.Size = originalSize
+
+	// Wrap everything inside a transaction.
+	err := crdb.ExecuteTx(n.cfs.db, func(tx *sql.Tx) error {
+
+		// Update blocks. They will be added as needed.
+		if err := write(tx, n.ID, n.Size, uint64(req.Offset), req.Data); err != nil {
 			return err
 		}
-	}
 
-	// All set: commit.
-	if err := tx.Commit(); err != nil {
+		if newSize > originalSize {
+			// This was an append, commit the size change.
+			n.Size = newSize
+			if err := updateNode(tx, n); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
 		// Reset our size.
 		log.Print(err)
 		n.Size = originalSize

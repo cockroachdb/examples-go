@@ -24,7 +24,7 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"github.com/cockroachdb/cockroach-go/cdb"
+	"github.com/cockroachdb/cockroach-go/crdb"
 )
 
 const rootNodeID = 1
@@ -76,7 +76,7 @@ func (cfs CFS) create(parentID uint64, name string, node *Node) error {
 	const insertNode = `INSERT INTO fs.inode VALUES ($1, $2)`
 	const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
 
-	err := cdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
 		if _, err := tx.Exec(insertNode, node.ID, inode); err != nil {
 			return err
 		}
@@ -96,7 +96,7 @@ func (cfs CFS) remove(parentID uint64, name string, checkChildren bool) error {
 	const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
 	const deleteBlock = `DELETE FROM fs.block WHERE id = $1`
 
-	err := cdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
 		// Start by looking up the node ID.
 		var id uint64
 		if err := tx.QueryRow(lookupSQL, parentID, name).Scan(&id); err != nil {
@@ -194,7 +194,7 @@ func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) 
 	const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
 	const updateNamespace = `UPDATE fs.namespace SET id = $1 WHERE (parentID, name) = ($2, $3)`
 	const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
-	err := cdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
 		// Lookup source inode.
 		srcObject, err := getInode(tx, oldParentID, oldName)
 		if err != nil {

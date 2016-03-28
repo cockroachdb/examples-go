@@ -27,7 +27,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/cockroachdb/cockroach-go/cdb"
+	"github.com/cockroachdb/cockroach-go/crdb"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -163,7 +163,7 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 	originalSize := n.Size
 
 	// Wrap everything inside a transaction.
-	err := cdb.ExecuteTx(n.cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(n.cfs.db, func(tx *sql.Tx) error {
 		// Resize blocks as needed.
 		if err := resizeBlocks(tx, n.ID, n.Size, req.Size); err != nil {
 			return err
@@ -288,7 +288,7 @@ func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.Write
 	originalSize := n.Size
 
 	// Wrap everything inside a transaction.
-	err := cdb.ExecuteTx(n.cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(n.cfs.db, func(tx *sql.Tx) error {
 
 		// Update blocks. They will be added as needed.
 		if err := write(tx, n.ID, n.Size, uint64(req.Offset), req.Data); err != nil {

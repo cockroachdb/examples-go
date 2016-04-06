@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS photos (
-  id           BYTES DEFAULT EXPERIMENTAL_UUID_V4(),
+  id           BYTES DEFAULT uuid_v4(),
   userID       INT,
   commentCount INT,
   caption      STRING,
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS photos (
 
 CREATE TABLE IF NOT EXISTS comments (
   photoID   BYTES,
-  commentID BYTES DEFAULT EXPERIMENTAL_UUID_V4(),
+  commentID BYTES DEFAULT uuid_v4(),
   userID    INT,
   message   STRING,
   timestamp TIMESTAMP,

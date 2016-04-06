@@ -146,12 +146,10 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if flag.NArg() != 1 {
-		usage()
-		os.Exit(2)
+	dbURL := "postgresql://root@localhost:26257/photos?sslmode=disable"
+	if flag.NArg() == 1 {
+		dbURL = flag.Arg(0)
 	}
-
-	dbURL := flag.Arg(0)
 
 	if *concurrency < 1 {
 		log.Fatalf("Value of 'concurrency' flag (%d) must be greater than or equal to 1", *concurrency)

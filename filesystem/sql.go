@@ -86,7 +86,7 @@ func getBlockData(e sqlExecutor, inodeID uint64, block int) ([]byte, error) {
 
 // updateBlockData overwrites the data for a single block.
 func updateBlockData(e sqlExecutor, inodeID uint64, block int, data []byte) error {
-	const sql = `UPDATE fs.block SET data = $1 WHERE (id, block) = ($2, $3)`
+	const sql = `UPDATE fs.block SET data = $1 WHERE id = $2 AND block = $3`
 	if _, err := e.Exec(sql, data, inodeID, block); err != nil {
 		return err
 	}

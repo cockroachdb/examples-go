@@ -67,6 +67,10 @@ filesystem:
 bank:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o bank/bank ./bank
 
+.PHONY: ledger
+ledger:
+	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o ledger/ledger ./ledger
+
 .PHONY: photos
 photos:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o photos/photos ./photos

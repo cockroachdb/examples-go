@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	// Import postgres driver.
@@ -116,7 +117,7 @@ var generators = map[string]genFn{
 		req.Group = rand.Int63()
 		if req.Group%100 == 0 {
 			// Create some fake contention in ~1% of the requests.
-			req.Group = 1
+			req.Group = int64(atomic.LoadInt32(&num) / 100)
 		}
 		return req
 	},
@@ -193,7 +194,15 @@ VALUES (
 func worker(db *sql.DB, l func(string, ...interface{}), gen func() postingRequest) {
 	for {
 		req := gen()
-		l("running %v", req)
+		if req.AccountA == req.AccountB {
+			// The code we use throws a unique constraint violation since we
+			// try to insert two conflicting primary keys. This isn't the
+			// interesting case.
+			continue
+		}
+		if *verbose {
+			l("running %v", req)
+		}
 		if err := crdb.ExecuteTx(db, func(tx *sql.Tx) error {
 			return doPosting(tx, req)
 		}); err != nil {
@@ -208,7 +217,9 @@ func worker(db *sql.DB, l func(string, ...interface{}), gen func() postingReques
 				if pqErr.Code.Class() == pq.ErrorClass("40") {
 					// Transaction rollback errors (e.g. Postgres
 					// serializability restarts)
-					l("%s", pqErr)
+					if *verbose {
+						l("%s", pqErr)
+					}
 					continue
 				}
 			}
@@ -257,7 +268,7 @@ func main() {
 		log.Print(err)
 	}
 
-	//db.SetMaxOpenConns(*concurrency)
+	db.SetMaxOpenConns(*concurrency)
 
 	for i := 0; i < *concurrency; i++ {
 		num := i

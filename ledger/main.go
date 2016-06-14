@@ -38,7 +38,7 @@ import (
 )
 
 const stmtCreate = `
-CREATE TABLE accounts (
+CREATE TABLE IF NOT EXISTS accounts (
   causality_id BIGINT NOT NULL,
   posting_group_id BIGINT NOT NULL,
 
@@ -114,10 +114,6 @@ var generators = map[string]genFn{
 		req.AccountA = fmt.Sprintf("acc%d", rand.Intn(10))
 		req.AccountB = fmt.Sprintf("acc%d", rand.Intn(10))
 		req.Group = rand.Int63()
-		if req.Group%100 == 0 {
-			// Create some fake contention in ~1% of the requests.
-			req.Group = 1
-		}
 		return req
 	},
 	// Highly contended: 10 users all involving one peer account.
@@ -190,32 +186,46 @@ VALUES (
 	return err
 }
 
-func worker(db *sql.DB, l func(string, ...interface{}), gen func() postingRequest) {
+type worker struct {
+	l   func(string, ...interface{}) // logger
+	gen func() postingRequest        // request generator
+}
+
+func (w *worker) run(db *sql.DB) {
 	for {
-		req := gen()
-		l("running %v", req)
+		req := w.gen()
+		if req.AccountA == req.AccountB {
+			// The code we use throws a unique constraint violation since we
+			// try to insert two conflicting primary keys. This isn't the
+			// interesting case.
+			continue
+		}
+		if *verbose {
+			w.l("running %v", req)
+		}
 		if err := crdb.ExecuteTx(db, func(tx *sql.Tx) error {
 			return doPosting(tx, req)
 		}); err != nil {
 			pqErr, ok := err.(*pq.Error)
 			if ok {
 				if pqErr.Code.Class() == pq.ErrorClass("23") {
-					// Integrity violations. Note that (especially with Postgres)
-					// the primary key will often be violated under congestion.
-					l("%s", pqErr)
+					// Integrity violations. Don't expect many.
+					w.l("%s", pqErr)
 					continue
 				}
 				if pqErr.Code.Class() == pq.ErrorClass("40") {
 					// Transaction rollback errors (e.g. Postgres
 					// serializability restarts)
-					l("%s", pqErr)
+					if *verbose {
+						w.l("%s", pqErr)
+					}
 					continue
 				}
 			}
 			log.Fatal(err)
 		} else {
 			if *verbose {
-				l("success")
+				w.l("success")
 			}
 			counter.Incr(1)
 		}
@@ -255,19 +265,23 @@ func main() {
 	defer func() { _ = db.Close() }()
 
 	// Ignoring the error is the easiest way to be reasonably sure the db+table
-	// exist without bloating the example.
+	// exist without bloating the example by introducing separate code for
+	// CockroachDB and Postgres (for which `IF NOT EXISTS` is not available
+	// in this context).
 	_, _ = db.Exec(`CREATE DATABASE ledger`)
 	if _, err := db.Exec(stmtCreate); err != nil {
-		log.Print(err)
+		log.Fatal(err)
 	}
-
-	//db.SetMaxOpenConns(*concurrency)
 
 	for i := 0; i < *concurrency; i++ {
 		num := i
-		go worker(db, func(s string, args ...interface{}) {
-			log.Printf(strconv.Itoa(num)+": "+s, args...)
-		}, gen)
+		go (&worker{
+			l: func(s string, args ...interface{}) {
+				if *verbose {
+					log.Printf(strconv.Itoa(num)+": "+s, args...)
+				}
+			},
+			gen: gen}).run(db)
 	}
 
 	go func() {
@@ -275,7 +289,7 @@ func main() {
 		for {
 			select {
 			case <-t.C:
-				log.Printf("%d postings/seq", counter.Rate())
+				log.Printf("%d postings/sec", counter.Rate())
 			}
 		}
 	}()

@@ -18,12 +18,12 @@ package main
 
 import (
 	"database/sql"
-	"errors"
 	"log"
 	"math/rand"
 	"time"
 
-	"github.com/cockroachdb/cockroach/util"
+	"github.com/pkg/errors"
+
 	// Import postgres driver.
 	_ "github.com/cockroachdb/pq"
 )
@@ -247,7 +247,7 @@ SELECT id, caption, commentCount, latitude, longitude, timestamp FROM photos WHE
 		var lat, lon float64
 		var ts time.Time
 		if err := rows.Scan(&id, &caption, &cCount, &lat, &lon, &ts); err != nil {
-			return util.Errorf("failed to scan result set for user %d: %s", userID, err)
+			return errors.Errorf("failed to scan result set for user %d: %s", userID, err)
 		}
 		count++
 		if photoIDs != nil {
@@ -303,7 +303,7 @@ func listComments(tx *sql.Tx, userID int, commentIDs *[][]byte) ([]byte, error) 
 		var userID int
 		var ts time.Time
 		if err := rows.Scan(&commentID, &userID, &message, &ts); err != nil {
-			return nil, util.Errorf("failed to scan result set for photo %q: %s", photoID, err)
+			return nil, errors.Errorf("failed to scan result set for photo %q: %s", photoID, err)
 		}
 		count++
 		if commentIDs != nil {

@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach-go/crdb"
-	"github.com/cockroachdb/cockroach/util"
 	"github.com/cockroachdb/cockroach/util/stop"
 	"github.com/codahale/hdrhistogram"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -135,7 +135,7 @@ func startUser(ctx Context, stopper *stop.Stopper) {
 		userID := 1 + int(rand.ExpFloat64()/rate)
 		op := randomOp()
 
-		if !stopper.RunTask(func() {
+		if err := stopper.RunTask(func() {
 			err := runUserOp(ctx, userID, op.typ)
 			stats.Lock()
 			_ = stats.hist.RecordValue(int64(userID))
@@ -149,7 +149,7 @@ func startUser(ctx Context, stopper *stop.Stopper) {
 				log.Printf("failed to run %s op for %d: %s", op.name, userID, err)
 			}
 			stats.Unlock()
-		}) {
+		}); err != nil {
 			return
 		}
 	}
@@ -180,7 +180,7 @@ func runUserOp(ctx Context, userID, opType int) error {
 		case deleteCommentOp:
 			return deleteComment(tx, userID)
 		default:
-			return util.Errorf("unsupported op type: %d", opType)
+			return errors.Errorf("unsupported op type: %d", opType)
 		}
 	})
 }

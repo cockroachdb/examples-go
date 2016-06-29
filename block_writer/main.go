@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,6 +54,9 @@ var outputInterval = flag.Duration("output-interval", 1*time.Second, "Interval o
 var minBlockSizeBytes = flag.Int("min-block-bytes", 256, "Minimum amount of raw data written with each insertion")
 var maxBlockSizeBytes = flag.Int("max-block-bytes", 1024, "Maximum amount of raw data written with each insertion")
 
+var maxBlocks = flag.Uint64("max-blocks", 0, "Maximum number of blocks to write")
+var duration = flag.Duration("duration", 0, "The duration to run. If 0, run forever.")
+
 // numBlocks keeps a global count of successfully written blocks.
 var numBlocks uint64
 
@@ -76,7 +80,9 @@ func newBlockWriter(db *sql.DB) blockWriter {
 
 // run is an infinite loop in which the blockWriter continuously attempts to
 // write blocks of random data into a table in cockroach DB.
-func (bw blockWriter) run(errCh chan<- error) {
+func (bw blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	for {
 		blockID := bw.rand.Int63()
 		blockData := bw.randomBlock()
@@ -84,7 +90,10 @@ func (bw blockWriter) run(errCh chan<- error) {
 		if _, err := bw.db.Exec(insertBlockStmt, blockID, bw.id, bw.blockCount, blockData); err != nil {
 			errCh <- fmt.Errorf("error running blockwriter %s: %s", bw.id, err)
 		} else {
-			atomic.AddUint64(&numBlocks, 1)
+			v := atomic.AddUint64(&numBlocks, 1)
+			if *maxBlocks > 0 && v >= *maxBlocks {
+				return
+			}
 		}
 	}
 }
@@ -180,38 +189,64 @@ func main() {
 	writers := make([]blockWriter, *concurrency)
 
 	errCh := make(chan error)
+	var wg sync.WaitGroup
 	for i := range writers {
+		wg.Add(1)
 		writers[i] = newBlockWriter(db)
-		go writers[i].run(errCh)
+		go writers[i].run(errCh, &wg)
 	}
 
 	var numErr int
-	for range time.Tick(*outputInterval) {
-		now := time.Now()
-		elapsed := time.Since(lastNow)
-		dumps := atomic.LoadUint64(&numBlocks)
-		fmt.Printf("%6s: %6.1f/sec",
-			time.Duration(time.Since(start).Seconds()+0.5)*time.Second,
-			float64(dumps-lastNumDumps)/elapsed.Seconds())
-		if numErr > 0 {
-			fmt.Printf(" (%d total errors)\n", numErr)
-		}
-		fmt.Printf("\n")
-		for {
-			select {
-			case err := <-errCh:
-				numErr++
-				if !*tolerateErrors {
-					log.Fatal(err)
-				} else {
-					log.Print(err)
-				}
-				continue
-			default:
+	tick := time.Tick(*outputInterval)
+	done := make(chan struct{}, 1)
+
+	go func() {
+		wg.Wait()
+		done <- struct{}{}
+	}()
+
+	if *duration > 0 {
+		go func() {
+			time.Sleep(*duration)
+			done <- struct{}{}
+		}()
+	}
+
+	for {
+		select {
+		case err := <-errCh:
+			numErr++
+			if !*tolerateErrors {
+				log.Fatal(err)
+			} else {
+				log.Print(err)
 			}
-			break
+			continue
+
+		case <-tick:
+			now := time.Now()
+			elapsed := time.Since(lastNow)
+			dumps := atomic.LoadUint64(&numBlocks)
+			fmt.Printf("%6s: %6.1f/sec",
+				time.Duration(time.Since(start).Seconds()+0.5)*time.Second,
+				float64(dumps-lastNumDumps)/elapsed.Seconds())
+			if numErr > 0 {
+				fmt.Printf(" (%d total errors)", numErr)
+			}
+			fmt.Printf("\n")
+			lastNumDumps = dumps
+			lastNow = now
+
+		case <-done:
+			dumps := atomic.LoadUint64(&numBlocks)
+			elapsed := time.Since(start).Seconds()
+			fmt.Printf("%6.1fs: %d total %6.1f/sec",
+				elapsed, dumps, float64(dumps)/elapsed)
+			if numErr > 0 {
+				fmt.Printf(" (%d total errors)\n", numErr)
+			}
+			fmt.Printf("\n")
+			os.Exit(0)
 		}
-		lastNumDumps = dumps
-		lastNow = now
 	}
 }

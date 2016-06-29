@@ -28,6 +28,7 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -41,7 +42,7 @@ const (
 )
 
 // concurrency = number of concurrent insertion processes.
-var concurrency = flag.Int("concurrency", 3, "Number of concurrent writers inserting blocks")
+var concurrency = flag.Int("concurrency", 2*runtime.NumCPU(), "Number of concurrent writers inserting blocks")
 
 var tolerateErrors = flag.Bool("tolerate-errors", false, "Keep running on error")
 

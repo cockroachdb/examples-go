@@ -130,6 +130,7 @@ func setupDatabase(dbURL string) (*sql.DB, error) {
 
 	// Allow a maximum of concurrency+1 connections to the database.
 	db.SetMaxOpenConns(*concurrency + 1)
+	db.SetMaxIdleConns(*concurrency + 1)
 
 	// Create the initial table for storing blocks.
 	if _, err := db.Exec(`

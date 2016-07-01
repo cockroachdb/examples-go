@@ -45,8 +45,11 @@ test:
 
 .PHONY: deps
 deps:
-	$(GO) get -u -d bazil.org/fuse
-	$(GO) get -u -d -t ./...
+	-DEPS=$$($(GO) list -f '{{ range .Imports}}{{ println . }}{{end}}{{ range .TestImports}}{{ println . }}{{end}}{{ range .XTestImports}}{{ println . }}{{end}}' ./... | \
+	  sort -u | egrep '\.(org|com)/' | \
+	  grep -v cockroachdb/examples-go); \
+	  echo $${DEPS}; \
+	  $(GO) get -u -d $${DEPS}
 
 .PHONY: build
 build: deps block_writer fakerealtime filesystem bank photos

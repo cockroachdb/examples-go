@@ -4,14 +4,14 @@ machine:
     PATH: ${PATH}:${HOME}/go/bin
   post:
     - sudo rm -rf /usr/local/go
-    - if [ ! -e go1.6.linux-amd64.tar.gz ]; then curl -O https://storage.googleapis.com/golang/go1.6.linux-amd64.tar.gz; fi
-    - tar -C ${HOME} -xzf go1.6.linux-amd64.tar.gz
+    - if [ ! -e go1.6.2.linux-amd64.tar.gz ]; then curl -O https://storage.googleapis.com/golang/go1.6.2.linux-amd64.tar.gz; fi
+    - tar -C ${HOME} -xzf go1.6.2.linux-amd64.tar.gz
 
 dependencies:
   override:
     - make deps
   cache_directories:
-    - ~/go1.6.linux-amd64.tar.gz
+    - ~/go1.6.2.linux-amd64.tar.gz
 
 test:
   override:

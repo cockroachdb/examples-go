@@ -7,9 +7,16 @@ machine:
     - if [ ! -e go1.6.2.linux-amd64.tar.gz ]; then curl -O https://storage.googleapis.com/golang/go1.6.2.linux-amd64.tar.gz; fi
     - tar -C ${HOME} -xzf go1.6.2.linux-amd64.tar.gz
 
+checkout:
+  post:
+    - rm -rf           "${GOPATH%%:*}/src/github.com/cockroachdb/examples-go"
+    - mkdir -p         "${GOPATH%%:*}/src/github.com/cockroachdb/"
+    - mv ~/examples-go "${GOPATH%%:*}/src/github.com/cockroachdb/"
+    - ln -s            "${GOPATH%%:*}/src/github.com/cockroachdb/examples-go" ~/examples-go
+
 dependencies:
   override:
-    - make deps
+    - make -C "${GOPATH%%:*}/src/github.com/cockroachdb/examples-go" deps
   cache_directories:
     - ~/go1.6.2.linux-amd64.tar.gz
 

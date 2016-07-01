@@ -45,8 +45,8 @@ test:
 
 .PHONY: deps
 deps:
-	$(GO) get -d bazil.org/fuse
-	$(GO) get -d -t ./...
+	$(GO) get -u -d bazil.org/fuse
+	$(GO) get -u -d -t ./...
 
 .PHONY: build
 build: deps block_writer fakerealtime filesystem bank photos

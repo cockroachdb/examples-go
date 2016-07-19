@@ -28,6 +28,8 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"os/signal"
+	"regexp"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -199,19 +201,35 @@ func main() {
 
 	var numErr int
 	tick := time.Tick(*outputInterval)
-	done := make(chan struct{}, 1)
+	done := make(chan os.Signal, 1)
+	signal.Notify(done)
 
 	go func() {
 		wg.Wait()
-		done <- struct{}{}
+		close(done)
 	}()
 
 	if *duration > 0 {
 		go func() {
 			time.Sleep(*duration)
-			done <- struct{}{}
+			close(done)
 		}()
 	}
+
+	defer func() {
+		// Output results that mimic Go's built-in benchmark format.
+		elapsed := time.Since(start)
+		benchmarkName := "BenchmarkBlockWriter"
+		if *duration != 0 {
+			// Append duration stripped of trailing time units that have a 0 value.
+			// For example, 6*time.Hour normally stringifies as "6h0m0s". This
+			// regex converts it into a more readable "6h".
+			d := regexp.MustCompile(`([a-z])0[0a-z]+`).ReplaceAllString(duration.String(), `$1`)
+			benchmarkName += d
+		}
+		fmt.Printf("%s\t%8d\t%12.1f ns/op\n",
+			benchmarkName, numBlocks, float64(elapsed.Nanoseconds())/float64(numBlocks))
+	}()
 
 	for {
 		select {
@@ -247,7 +265,7 @@ func main() {
 				fmt.Printf(" (%d total errors)\n", numErr)
 			}
 			fmt.Printf("\n")
-			os.Exit(0)
+			return
 		}
 	}
 }

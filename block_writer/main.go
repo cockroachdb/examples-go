@@ -240,13 +240,16 @@ func main() {
 
 		case <-done:
 			dumps := atomic.LoadUint64(&numBlocks)
-			elapsed := time.Since(start).Seconds()
+			elapsed := time.Since(start)
 			fmt.Printf("%6.1fs: %d total %6.1f/sec",
-				elapsed, dumps, float64(dumps)/elapsed)
+				elapsed.Seconds(), dumps, float64(dumps)/elapsed.Seconds())
 			if numErr > 0 {
 				fmt.Printf(" (%d total errors)\n", numErr)
 			}
 			fmt.Printf("\n")
+			// Output results that mimic Go's built-in benchmark format.
+			fmt.Printf("BenchmarkBlockWriter\t%8d\t%12.1f ns/op\n",
+				numBlocks, float64(elapsed.Nanoseconds())/float64(numBlocks))
 			os.Exit(0)
 		}
 	}

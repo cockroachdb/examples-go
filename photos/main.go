@@ -54,8 +54,9 @@ func normalizeStdFlagName(s string) string {
 }
 
 var usage = map[string]string{
-	"db":    "URL to the CockroachDB cluster",
-	"users": "number of concurrent simulated users",
+	"db":             "URL to the CockroachDB cluster",
+	"users":          "number of concurrent simulated users",
+	"benchmark-name": "name of benchmark to report for Go benchmark results",
 }
 
 // A Context holds configuration data.
@@ -66,11 +67,15 @@ type Context struct {
 	NumUsers int
 	//
 	DB *sql.DB
+	// Name of benchmark to use in benchmark results outputted upon process
+	// termination. Used for analyzing performance over time.
+	BenchmarkName string
 }
 
 var ctx = Context{
-	DBUrl:    "postgresql://root@localhost:26257/photos?sslmode=disable",
-	NumUsers: 1,
+	DBUrl:         "postgresql://root@localhost:26257/photos?sslmode=disable",
+	NumUsers:      1,
+	BenchmarkName: "BenchmarkPhotos",
 }
 
 var loadCmd = &cobra.Command{
@@ -127,7 +132,15 @@ func runLoad(c *cobra.Command, args []string) error {
 	case <-time.After(time.Minute):
 		return fmt.Errorf("time limit reached, initiating hard shutdown")
 	case <-stopper.IsStopped():
-		log.Printf("load generation complete")
+		log.Println("load generation complete")
+
+		// Output results that mimic Go's built-in benchmark format.
+		stats.Lock()
+		elapsed := time.Now().Sub(stats.start)
+		fmt.Println("Go benchmark results:")
+		fmt.Printf("%s\t%8d\t%12.1f ns/op\n",
+			ctx.BenchmarkName, stats.totalOps, float64(elapsed.Nanoseconds())/float64(stats.totalOps))
+		stats.Unlock()
 	}
 	return nil
 }
@@ -169,6 +182,8 @@ func init() {
 	// Add persistent flags to the top-level command.
 	loadCmd.PersistentFlags().IntVarP(&ctx.NumUsers, "users", "", ctx.NumUsers, usage["users"])
 	loadCmd.PersistentFlags().StringVarP(&ctx.DBUrl, "db", "", ctx.DBUrl, usage["db"])
+	loadCmd.PersistentFlags().StringVarP(&ctx.BenchmarkName, "benchmark-name", "", ctx.BenchmarkName,
+		usage["benchmark-name"])
 }
 
 // Run ...

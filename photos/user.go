@@ -68,6 +68,7 @@ var ops = []*opDesc{
 
 var stats struct {
 	sync.Mutex
+	start     time.Time
 	computing bool
 	totalOps  int
 	noUserOps int
@@ -78,6 +79,7 @@ var stats struct {
 
 func init() {
 	stats.hist = hdrhistogram.New(0, 0x7fffffff, 1)
+	stats.start = time.Now()
 	stats.opCounts = map[int]int{}
 
 	// Compute the total of all op relative frequencies.

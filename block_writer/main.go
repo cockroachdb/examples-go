@@ -28,9 +28,11 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"os/signal"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/satori/go.uuid"
@@ -56,6 +58,8 @@ var maxBlockSizeBytes = flag.Int("max-block-bytes", 1024, "Maximum amount of raw
 
 var maxBlocks = flag.Uint64("max-blocks", 0, "Maximum number of blocks to write")
 var duration = flag.Duration("duration", 0, "The duration to run. If 0, run forever.")
+var benchmarkName = flag.String("benchmark-name", "BenchmarkBlockWriter", "Test name to report "+
+	"for Go benchmark results.")
 
 // numBlocks keeps a global count of successfully written blocks.
 var numBlocks uint64
@@ -199,19 +203,27 @@ func main() {
 
 	var numErr int
 	tick := time.Tick(*outputInterval)
-	done := make(chan struct{}, 1)
+	done := make(chan os.Signal, 3)
+	signal.Notify(done)
 
 	go func() {
 		wg.Wait()
-		done <- struct{}{}
+		done <- syscall.Signal(0)
 	}()
 
 	if *duration > 0 {
 		go func() {
 			time.Sleep(*duration)
-			done <- struct{}{}
+			done <- syscall.Signal(0)
 		}()
 	}
+
+	defer func() {
+		// Output results that mimic Go's built-in benchmark format.
+		elapsed := time.Since(start)
+		fmt.Printf("%s\t%8d\t%12.1f ns/op\n",
+			*benchmarkName, numBlocks, float64(elapsed.Nanoseconds())/float64(numBlocks))
+	}()
 
 	for {
 		select {
@@ -247,7 +259,7 @@ func main() {
 				fmt.Printf(" (%d total errors)\n", numErr)
 			}
 			fmt.Printf("\n")
-			os.Exit(0)
+			return
 		}
 	}
 }

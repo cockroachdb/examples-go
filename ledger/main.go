@@ -243,6 +243,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	parsedURL.Path = "ledger"
 
 	db, err := sql.Open("postgres", parsedURL.String())
 	if err != nil {

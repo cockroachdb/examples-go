@@ -243,6 +243,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if parsedURL.Path != "" && parsedURL.Path != "ledger" {
+		log.Fatalf("unsupported database name %q in URL", parsedURL.Path)
+	}
+	parsedURL.Path = "ledger"
 
 	db, err := sql.Open("postgres", parsedURL.String())
 	if err != nil {

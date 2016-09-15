@@ -88,7 +88,7 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	if err := initSchema(db); err != nil {
+	if err = initSchema(db); err != nil {
 		log.Fatal(err)
 	}
 
@@ -112,7 +112,7 @@ func main() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt)
 		for range sig {
-			if err := fuse.Unmount(mountPoint); err != nil {
+			if err = fuse.Unmount(mountPoint); err != nil {
 				log.Printf("Signal received, but could not unmount: %s", err)
 			} else {
 				break

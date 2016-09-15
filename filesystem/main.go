@@ -61,7 +61,7 @@ import (
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
 	// Import postgres driver.
-	_ "github.com/cockroachdb/pq"
+	_ "github.com/lib/pq"
 )
 
 var usage = func() {

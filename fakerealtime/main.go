@@ -58,7 +58,7 @@ import (
 
 	"github.com/montanaflynn/stats"
 	// Import postgres driver.
-	_ "github.com/cockroachdb/pq"
+	_ "github.com/lib/pq"
 )
 
 func createTables(db *sql.DB) error {

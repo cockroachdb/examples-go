@@ -37,7 +37,7 @@ import (
 
 	"github.com/satori/go.uuid"
 	// Import postgres driver.
-	_ "github.com/cockroachdb/pq"
+	_ "github.com/lib/pq"
 )
 
 const (

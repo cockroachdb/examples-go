@@ -43,8 +43,8 @@ const (
 	listCommentsOp
 	updatePhotoOp
 	updateCommentOp
-	deletePhotoOp
 	deleteCommentOp
+	deletePhotoOp
 )
 
 type opDesc struct {
@@ -54,6 +54,10 @@ type opDesc struct {
 	normFreq float64
 }
 
+// Note that tests care about the order here: running each command
+// once in this order is expected to succeed (so users must be created
+// be photos which must be created before comments, with deletion in
+// the reverse order).
 var ops = []*opDesc{
 	{createUserOp, "create user", 1, 0},
 	{createPhotoOp, "create photo", 10, 0},
@@ -62,19 +66,20 @@ var ops = []*opDesc{
 	{listCommentsOp, "list comments", 20, 0},
 	{updatePhotoOp, "update photo", 2.5, 0},
 	{updateCommentOp, "update comment", 5, 0},
-	{deletePhotoOp, "delete photo", 1.25, 0},
 	{deleteCommentOp, "delete comment", 2.5, 0},
+	{deletePhotoOp, "delete photo", 1.25, 0},
 }
 
 var stats struct {
 	sync.Mutex
-	start     time.Time
-	computing bool
-	totalOps  int
-	noUserOps int
-	failedOps int
-	hist      *hdrhistogram.Histogram
-	opCounts  map[int]int
+	start      time.Time
+	computing  bool
+	totalOps   int
+	noUserOps  int
+	noPhotoOps int
+	failedOps  int
+	hist       *hdrhistogram.Histogram
+	opCounts   map[int]int
 }
 
 func init() {
@@ -115,7 +120,7 @@ func startStats(stopper *stop.Stopper) {
 		case <-ticker.C:
 			stats.Lock()
 			opsPerSec := float64(stats.totalOps-lastOps) / float64(statsInterval/1E9)
-			log.Printf("%d ops, %d no-user, %d errs (%.2f/s)", stats.totalOps, stats.noUserOps, stats.failedOps, opsPerSec)
+			log.Printf("%d ops, %d no-user, %d no-photo, %d errs (%.2f/s)", stats.totalOps, stats.noUserOps, stats.noPhotoOps, stats.failedOps, opsPerSec)
 			lastOps = stats.totalOps
 			stats.Unlock()
 		case <-stopper.ShouldStop():
@@ -146,6 +151,8 @@ func startUser(ctx Context, stopper *stop.Stopper) {
 			switch {
 			case err == errNoUser:
 				stats.noUserOps++
+			case err == errNoPhoto:
+				stats.noPhotoOps++
 			case err != nil:
 				stats.failedOps++
 				log.Printf("failed to run %s op for %d: %s", op.name, userID, err)

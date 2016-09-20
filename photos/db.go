@@ -28,6 +28,9 @@ import (
 	_ "github.com/cockroachdb/pq"
 )
 
+var errNoUser = errors.New("no user found")
+var errNoPhoto = errors.New("no photos found")
+
 const (
 	// TODO(spencer): update the CREATE DATABASE statement in the schema
 	//   to pull out the database specified in the DB URL and use it instead
@@ -59,7 +62,11 @@ CREATE TABLE IF NOT EXISTS photos (
 );
 
 CREATE TABLE IF NOT EXISTS comments (
-  photoID   BYTES,
+  -- length check guards against insertion of empty photo ID.
+  -- TODO(bdarnell): consider replacing length check with foreign key.
+  -- Start with the length check because it's local; we'll want to keep
+  -- an eye on performance when introducing the FK.
+  photoID   BYTES CHECK (length(photoID) = 16),
   commentID BYTES DEFAULT uuid_v4(),
   userID    INT,
   message   STRING,
@@ -95,8 +102,6 @@ func randString(n int) string {
 	}
 	return string(b)
 }
-
-var errNoUser = errors.New("no user found")
 
 // userExists looks up a user by ID.
 func userExists(tx *sql.Tx, userID int) (bool, error) {
@@ -267,7 +272,7 @@ func chooseRandomPhoto(tx *sql.Tx, userID int) ([]byte, error) {
 		return nil, err
 	}
 	if len(photoIDs) == 0 {
-		return nil, nil
+		return nil, errNoPhoto
 	}
 	photoID := photoIDs[rand.Intn(len(photoIDs))]
 	return photoID, nil

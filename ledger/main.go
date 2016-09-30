@@ -33,7 +33,7 @@ import (
 
 	// Import postgres driver.
 	"github.com/cockroachdb/cockroach-go/crdb"
-	"github.com/cockroachdb/pq"
+	"github.com/lib/pq"
 	"github.com/paulbellamy/ratecounter"
 )
 

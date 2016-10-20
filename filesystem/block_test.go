@@ -25,7 +25,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach-go/testserver"
-	"github.com/cockroachdb/cockroach/util/randutil"
+	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 )
 
 func initTestDB(t *testing.T) (*sql.DB, func()) {

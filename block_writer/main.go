@@ -21,6 +21,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -41,11 +42,14 @@ import (
 )
 
 const (
-	insertBlockStmt = `INSERT INTO blocks (block_id, writer_id, block_num, raw_bytes) VALUES ($1, $2, $3, $4)`
+	insertBlockStmt = `INSERT INTO blocks (block_id, writer_id, block_num, raw_bytes) VALUES`
 )
 
 // concurrency = number of concurrent insertion processes.
 var concurrency = flag.Int("concurrency", 2*runtime.NumCPU(), "Number of concurrent writers inserting blocks")
+
+// batch = number of blocks to insert in a single SQL statement.
+var batch = flag.Int("batch", 1, "Number of blocks to insert in a single SQL statement")
 
 var tolerateErrors = flag.Bool("tolerate-errors", false, "Keep running on error")
 
@@ -88,13 +92,24 @@ func (bw blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
-		blockID := bw.rand.Int63()
-		blockData := bw.randomBlock()
-		bw.blockCount++
-		if _, err := bw.db.Exec(insertBlockStmt, blockID, bw.id, bw.blockCount, blockData); err != nil {
+		var buf bytes.Buffer
+		var args []interface{}
+		fmt.Fprintf(&buf, "%s", insertBlockStmt)
+
+		for i := 0; i < *batch; i++ {
+			blockID := bw.rand.Int63()
+			bw.blockCount++
+			args = append(args, bw.randomBlock())
+			if i > 0 {
+				fmt.Fprintf(&buf, ",")
+			}
+			fmt.Fprintf(&buf, ` (%d, '%s', %d, $%d)`, blockID, bw.id, bw.blockCount, i+1)
+		}
+
+		if _, err := bw.db.Exec(buf.String(), args...); err != nil {
 			errCh <- fmt.Errorf("error running blockwriter %s: %s", bw.id, err)
 		} else {
-			v := atomic.AddUint64(&numBlocks, 1)
+			v := atomic.AddUint64(&numBlocks, uint64(*batch))
 			if *maxBlocks > 0 && v >= *maxBlocks {
 				return
 			}

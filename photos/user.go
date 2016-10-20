@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach-go/crdb"
-	"github.com/cockroachdb/cockroach/util/stop"
+	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/codahale/hdrhistogram"
 	"github.com/pkg/errors"
 )

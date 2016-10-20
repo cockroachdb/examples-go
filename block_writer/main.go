@@ -243,6 +243,11 @@ func main() {
 			fmt.Printf("%6s: %6.1f/sec",
 				time.Duration(time.Since(start).Seconds()+0.5)*time.Second,
 				float64(dumps-lastNumDumps)/elapsed.Seconds())
+			if *duration > 0 || *maxBlocks > 0 {
+				// If the duration or max-blocks are limited, show the average
+				// performance since starting.
+				fmt.Printf("  %6.1f/sec", float64(dumps)/time.Since(start).Seconds())
+			}
 			if numErr > 0 {
 				fmt.Printf(" (%d total errors)", numErr)
 			}

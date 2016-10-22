@@ -26,12 +26,6 @@ GOFLAGS :=
 STATIC :=
 
 ifeq ($(STATIC),1)
-# The netgo build tag instructs the net package to try to build a
-# Go-only resolver.
-TAGS += netgo
-# The installsuffix makes sure we actually get the netgo build, see
-# https://github.com/golang/go/issues/9369#issuecomment-69864440
-GOFLAGS += -installsuffix netgo
 LDFLAGS += -extldflags "-static"
 endif
 

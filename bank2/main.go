@@ -34,7 +34,6 @@ import (
 )
 
 const systemAccountID = 0
-const initialSystemBalance = 1000000
 const initialBalance = 1000
 
 var maxTransfer = flag.Int("max-transfer", 100, "Maximum amount to transfer in one transaction.")
@@ -46,9 +45,11 @@ var balanceCheckInterval = flag.Duration("balance-check-interval", time.Second, 
 
 var txnCount int32
 var successCount int32
+var initialSystemBalance int
 
 type measurement struct {
 	read, write, total int64
+	retries            int32
 }
 
 func transfersComplete() bool {
@@ -77,8 +78,13 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 		}
 		amount := rand.Intn(*maxTransfer)
 		start := time.Now()
+		attempts := 0
 
 		if err := crdb.ExecuteTx(db, func(tx *sql.Tx) error {
+			attempts++
+			if attempts > 1 {
+				atomic.AddInt32(&aggr.retries, 1)
+			}
 			startRead := time.Now()
 			rows, err := tx.Query(`SELECT id, balance FROM account WHERE id IN ($1, $2)`, from, to)
 			if err != nil {
@@ -188,7 +194,7 @@ func main() {
 	if _, err = db.Exec(`
 CREATE TABLE IF NOT EXISTS account (
   id INT,
-  balance BIGINT NOT NULL,
+  balance INT NOT NULL,
   name STRING,
 
   PRIMARY KEY (id),
@@ -208,8 +214,8 @@ CREATE TABLE IF NOT EXISTS transaction (
 CREATE TABLE IF NOT EXISTS transaction_leg (
   id BYTES DEFAULT uuid_v4(),
   account_id INT,
-  amount BIGINT NOT NULL,
-  running_balance BIGINT NOT NULL,
+  amount INT NOT NULL,
+  running_balance INT NOT NULL,
   txn_id INT,
 
   PRIMARY KEY (id)
@@ -225,6 +231,7 @@ TRUNCATE TABLE transaction_leg;
 	insertSQL := "INSERT INTO account (id, balance, name) VALUES ($1, $2, $3)"
 
 	// Insert initialSystemBalance into the system account.
+	initialSystemBalance = *numAccounts * initialBalance
 	if _, err = db.Exec(insertSQL, systemAccountID, initialSystemBalance, "system account"); err != nil {
 		log.Fatal(err)
 	}
@@ -258,11 +265,14 @@ TRUNCATE TABLE transaction_leg;
 		read := time.Duration(atomic.LoadInt64(&aggr.read))
 		write := time.Duration(atomic.LoadInt64(&aggr.write))
 		total := time.Duration(atomic.LoadInt64(&aggr.total))
-		log.Printf("timings: avg read: %v, avg write: %v, avg txn: %v", read/d, write/d, total/d)
+		retries := time.Duration(atomic.LoadInt32(&aggr.retries))
+		log.Printf("averages: read: %v, write: %v, txn: %v, retries: %d",
+			read/d, write/d, total/d, retries/d)
 		verifyTotalBalance(db)
 		if transfersComplete() {
 			break
 		}
 	}
-	log.Printf("completed %d transfers in %s", atomic.LoadInt32(&successCount), time.Since(start))
+	log.Printf("completed %d transfers in %s with %d retries", atomic.LoadInt32(&successCount),
+		time.Since(start), atomic.LoadInt32(&aggr.retries))
 }

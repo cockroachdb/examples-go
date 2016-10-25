@@ -219,7 +219,7 @@ func main() {
 	var numErr int
 	tick := time.Tick(*outputInterval)
 	done := make(chan os.Signal, 3)
-	signal.Notify(done)
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		wg.Wait()

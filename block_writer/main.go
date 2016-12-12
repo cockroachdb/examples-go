@@ -51,6 +51,8 @@ var concurrency = flag.Int("concurrency", 2*runtime.NumCPU(), "Number of concurr
 // batch = number of blocks to insert in a single SQL statement.
 var batch = flag.Int("batch", 1, "Number of blocks to insert in a single SQL statement")
 
+var splits = flag.Int("splits", 0, "Number of splits to perform before starting normal operations")
+
 var tolerateErrors = flag.Bool("tolerate-errors", false, "Keep running on error")
 
 // outputInterval = interval at which information is output to console.
@@ -161,6 +163,15 @@ func setupDatabase(dbURL string) (*sql.DB, error) {
 	  PRIMARY KEY (block_id, writer_id, block_num)
 	)`); err != nil {
 		return nil, err
+	}
+
+	if *splits > 0 {
+		r := rand.New(rand.NewSource(int64(time.Now().UnixNano())))
+		for i := 0; i < *splits; i++ {
+			if _, err := db.Exec(`ALTER TABLE blocks SPLIT AT ($1, '', 0)`, r.Int63()); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return db, nil

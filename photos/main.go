@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -155,6 +156,16 @@ Drop the photos database to start fresh.
 	RunE:    runDrop,
 }
 
+var splitCmd = &cobra.Command{
+	Use:   "split",
+	Short: "split the photos database",
+	Long: `
+Split all tables in the photos database to start fresh.
+`,
+	Example: `  photos split --db=<URL> <num splits>`,
+	RunE:    runSplit,
+}
+
 func runDrop(c *cobra.Command, args []string) error {
 	log.Printf("dropping photos database")
 	db, err := openDB(ctx)
@@ -168,10 +179,40 @@ func runDrop(c *cobra.Command, args []string) error {
 	return nil
 }
 
+func runSplit(c *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("argument required: <num splits>")
+	}
+	numSplits, err := strconv.ParseUint(args[0], 10, 32)
+	if err != nil {
+		return fmt.Errorf("unable to parse argument <num splits>: %v", err)
+	}
+	log.Printf("splitting photos database into %d chunks", numSplits)
+
+	db, err := openDB(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	log.Printf("splitting table \"users\"")
+	var i uint64
+	for i = 0; i < numSplits; i++ {
+		// Use the userID generation logic.
+		userID := 1 + int(rand.ExpFloat64()/rate)
+		if _, err := db.Exec(`ALTER TABLE users SPLIT AT $1`, userID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func init() {
 	rand.Seed(time.Now().UnixNano())
 	loadCmd.AddCommand(
 		dropCmd,
+		splitCmd,
 	)
 	// Map any flags registered in the standard "flag" package into the
 	// top-level command.

@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
+	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -183,10 +184,11 @@ func runSplit(c *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("argument required: <num splits>")
 	}
-	numSplits, err := strconv.ParseUint(args[0], 10, 32)
+	n, err := strconv.ParseUint(args[0], 10, 32)
 	if err != nil {
 		return fmt.Errorf("unable to parse argument <num splits>: %v", err)
 	}
+	numSplits := int(n)
 	log.Printf("splitting photos database into %d chunks", numSplits)
 
 	db, err := openDB(ctx)
@@ -195,13 +197,39 @@ func runSplit(c *cobra.Command, args []string) error {
 	}
 	defer func() { _ = db.Close() }()
 
+	if err := initSchema(db); err != nil {
+		log.Fatal(err)
+	}
+	ctx.DB = db
+
 	log.Printf("splitting table \"users\"")
-	var i uint64
-	for i = 0; i < numSplits; i++ {
+	for count := 0; count < numSplits; {
 		// Use the userID generation logic.
 		userID := 1 + int(rand.ExpFloat64()/rate)
-		if _, err := db.Exec(`ALTER TABLE users SPLIT AT $1`, userID); err != nil {
-			return err
+		if _, err := db.Exec(`ALTER TABLE users SPLIT AT ($1)`, userID); err != nil {
+			log.Printf("problem splitting: %v", err)
+		} else {
+			count++
+		}
+	}
+
+	log.Printf("splitting table \"photos\"")
+	for count := 0; count < numSplits; {
+		id := uuid.MakeV4().GetBytes()
+		if _, err := db.Exec(`ALTER TABLE photos SPLIT AT ($1)`, id); err != nil {
+			log.Printf("problem splitting: %v", err)
+		} else {
+			count++
+		}
+	}
+
+	log.Printf("splitting table \"comments\"")
+	for count := 0; count < numSplits; {
+		id := uuid.MakeV4().GetBytes()
+		if _, err := db.Exec(`ALTER TABLE comments SPLIT AT ($1, '2016-01-01', '')`, id); err != nil {
+			log.Printf("problem splitting: %v", err)
+		} else {
+			count++
 		}
 	}
 

@@ -57,6 +57,10 @@ fakerealtime:
 filesystem:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o filesystem/filesystem ./filesystem
 
+.PHONY: hotspot
+hotspot:
+	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o hotspot/hotspot ./hotspot
+
 .PHONY: bank
 bank:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o bank/bank ./bank

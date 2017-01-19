@@ -18,7 +18,10 @@ package main
 
 import (
 	"database/sql"
+	"encoding/binary"
+	"hash/fnv"
 	"log"
+	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -138,8 +141,21 @@ func startStats(stopper *stop.Stopper) {
 // startUser simulates a stream of user events until the stopper
 // indicates it's time to exit.
 func startUser(ctx Context, stopper *stop.Stopper) {
+	h := fnv.New32()
+	var buf [8]byte
+
+	randomUser := func() int {
+		// Use an exponential distribution to skew the user ID generation, but
+		// hash the randomly generated value so that the "hot" users are spread
+		// throughout the user ID key space (and thus not all on 1 range).
+		binary.BigEndian.PutUint64(buf[:8], math.Float64bits(rand.ExpFloat64()/rate))
+		h.Reset()
+		h.Write(buf[:8])
+		return int(h.Sum32())
+	}
+
 	for {
-		userID := 1 + int(rand.ExpFloat64()/rate)
+		userID := randomUser()
 		op := randomOp()
 
 		if err := stopper.RunTask(func() {

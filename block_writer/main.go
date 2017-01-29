@@ -73,17 +73,14 @@ var numBlocks uint64
 // A blockWriter writes blocks of random data into cockroach in an infinite
 // loop.
 type blockWriter struct {
-	id         string
-	blockCount uint64
-	db         *sql.DB
-	rand       *rand.Rand
+	db   *sql.DB
+	rand *rand.Rand
 }
 
 func newBlockWriter(db *sql.DB) blockWriter {
 	source := rand.NewSource(int64(time.Now().UnixNano()))
 	return blockWriter{
 		db:   db,
-		id:   uuid.NewV4().String(),
 		rand: rand.New(source),
 	}
 }
@@ -93,6 +90,9 @@ func newBlockWriter(db *sql.DB) blockWriter {
 func (bw blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	id := uuid.NewV4().String()
+	var blockCount uint64
+
 	for {
 		var buf bytes.Buffer
 		var args []interface{}
@@ -100,16 +100,16 @@ func (bw blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 
 		for i := 0; i < *batch; i++ {
 			blockID := bw.rand.Int63()
-			bw.blockCount++
+			blockCount++
 			args = append(args, bw.randomBlock())
 			if i > 0 {
 				fmt.Fprintf(&buf, ",")
 			}
-			fmt.Fprintf(&buf, ` (%d, '%s', %d, $%d)`, blockID, bw.id, bw.blockCount, i+1)
+			fmt.Fprintf(&buf, ` (%d, '%s', %d, $%d)`, blockID, id, blockCount, i+1)
 		}
 
 		if _, err := bw.db.Exec(buf.String(), args...); err != nil {
-			errCh <- fmt.Errorf("error running blockwriter %s: %s", bw.id, err)
+			errCh <- err
 		} else {
 			v := atomic.AddUint64(&numBlocks, uint64(*batch))
 			if *maxBlocks > 0 && v >= *maxBlocks {
@@ -216,7 +216,7 @@ func main() {
 
 	lastNow := time.Now()
 	start := lastNow
-	var lastNumDumps uint64
+	var lastBlocks uint64
 	writers := make([]blockWriter, *concurrency)
 
 	errCh := make(chan error)
@@ -251,7 +251,7 @@ func main() {
 			*benchmarkName, numBlocks, float64(elapsed.Nanoseconds())/float64(numBlocks))
 	}()
 
-	for {
+	for i := 0; true; {
 		select {
 		case err := <-errCh:
 			numErr++
@@ -265,31 +265,26 @@ func main() {
 		case <-tick:
 			now := time.Now()
 			elapsed := time.Since(lastNow)
-			dumps := atomic.LoadUint64(&numBlocks)
-			fmt.Printf("%6s: %6.1f/sec",
+			blocks := atomic.LoadUint64(&numBlocks)
+			if i%20 == 0 {
+				fmt.Println("_elapsed___errors__ops/sec(inst)___ops/sec(cum)")
+			}
+			i++
+			fmt.Printf("%8s %8d %14.1f %14.1f\n",
 				time.Duration(time.Since(start).Seconds()+0.5)*time.Second,
-				float64(dumps-lastNumDumps)/elapsed.Seconds())
-			if *duration > 0 || *maxBlocks > 0 {
-				// If the duration or max-blocks are limited, show the average
-				// performance since starting.
-				fmt.Printf("  %6.1f/sec", float64(dumps)/time.Since(start).Seconds())
-			}
-			if numErr > 0 {
-				fmt.Printf(" (%d total errors)", numErr)
-			}
-			fmt.Printf("\n")
-			lastNumDumps = dumps
+				numErr,
+				float64(blocks-lastBlocks)/elapsed.Seconds(),
+				float64(blocks)/time.Since(start).Seconds())
+			lastBlocks = blocks
 			lastNow = now
 
 		case <-done:
-			dumps := atomic.LoadUint64(&numBlocks)
+			blocks := atomic.LoadUint64(&numBlocks)
 			elapsed := time.Since(start).Seconds()
-			fmt.Printf("%6.1fs: %d total %6.1f/sec",
-				elapsed, dumps, float64(dumps)/elapsed)
-			if numErr > 0 {
-				fmt.Printf(" (%d total errors)\n", numErr)
-			}
-			fmt.Printf("\n")
+			fmt.Println("\n_elapsed___errors_________blocks___ops/sec(cum)")
+			fmt.Printf("%7.1fs %8d %14d %14.1f\n\n",
+				time.Since(start).Seconds(), numErr,
+				blocks, float64(blocks)/elapsed)
 			return
 		}
 	}

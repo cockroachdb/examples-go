@@ -36,6 +36,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/codahale/hdrhistogram"
 	"github.com/satori/go.uuid"
 	// Import postgres driver.
 	_ "github.com/lib/pq"
@@ -70,28 +71,34 @@ var benchmarkName = flag.String("benchmark-name", "BenchmarkBlockWriter", "Test 
 // numBlocks keeps a global count of successfully written blocks.
 var numBlocks uint64
 
-// A blockWriter writes blocks of random data into cockroach in an infinite
-// loop.
 type blockWriter struct {
-	id         string
-	blockCount uint64
-	db         *sql.DB
-	rand       *rand.Rand
+	db      *sql.DB
+	rand    *rand.Rand
+	latency struct {
+		sync.Mutex
+		*hdrhistogram.WindowedHistogram
+	}
 }
 
-func newBlockWriter(db *sql.DB) blockWriter {
-	source := rand.NewSource(int64(time.Now().UnixNano()))
-	return blockWriter{
+func newBlockWriter(db *sql.DB) *blockWriter {
+	bw := &blockWriter{
 		db:   db,
-		id:   uuid.NewV4().String(),
-		rand: rand.New(source),
+		rand: rand.New(rand.NewSource(int64(time.Now().UnixNano()))),
 	}
+	bw.latency.WindowedHistogram = hdrhistogram.NewWindowed(1,
+		(100 * time.Microsecond).Nanoseconds(),
+		(10 * time.Second).Nanoseconds(),
+		1)
+	return bw
 }
 
 // run is an infinite loop in which the blockWriter continuously attempts to
 // write blocks of random data into a table in cockroach DB.
-func (bw blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
+func (bw *blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	id := uuid.NewV4().String()
+	var blockCount uint64
 
 	for {
 		var buf bytes.Buffer
@@ -100,17 +107,24 @@ func (bw blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 
 		for i := 0; i < *batch; i++ {
 			blockID := bw.rand.Int63()
-			bw.blockCount++
+			blockCount++
 			args = append(args, bw.randomBlock())
 			if i > 0 {
 				fmt.Fprintf(&buf, ",")
 			}
-			fmt.Fprintf(&buf, ` (%d, '%s', %d, $%d)`, blockID, bw.id, bw.blockCount, i+1)
+			fmt.Fprintf(&buf, ` (%d, '%s', %d, $%d)`, blockID, id, blockCount, i+1)
 		}
 
+		start := time.Now()
 		if _, err := bw.db.Exec(buf.String(), args...); err != nil {
-			errCh <- fmt.Errorf("error running blockwriter %s: %s", bw.id, err)
+			errCh <- err
 		} else {
+			elapsed := time.Since(start)
+			bw.latency.Lock()
+			if err := bw.latency.Current.RecordValue(elapsed.Nanoseconds()); err != nil {
+				log.Fatal(err)
+			}
+			bw.latency.Unlock()
 			v := atomic.AddUint64(&numBlocks, uint64(*batch))
 			if *maxBlocks > 0 && v >= *maxBlocks {
 				return
@@ -119,9 +133,7 @@ func (bw blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 	}
 }
 
-// randomBlock generates a slice of randomized bytes. Random data is preferred
-// to prevent compression in storage.
-func (bw blockWriter) randomBlock() []byte {
+func (bw *blockWriter) randomBlock() []byte {
 	blockSize := bw.rand.Intn(*maxBlockSizeBytes-*minBlockSizeBytes) + *minBlockSizeBytes
 	blockData := make([]byte, blockSize)
 	for i := range blockData {
@@ -216,8 +228,8 @@ func main() {
 
 	lastNow := time.Now()
 	start := lastNow
-	var lastNumDumps uint64
-	writers := make([]blockWriter, *concurrency)
+	var lastBlocks uint64
+	writers := make([]*blockWriter, *concurrency)
 
 	errCh := make(chan error)
 	var wg sync.WaitGroup
@@ -251,7 +263,7 @@ func main() {
 			*benchmarkName, numBlocks, float64(elapsed.Nanoseconds())/float64(numBlocks))
 	}()
 
-	for {
+	for i := 0; ; {
 		select {
 		case err := <-errCh:
 			numErr++
@@ -263,33 +275,50 @@ func main() {
 			continue
 
 		case <-tick:
+			var h *hdrhistogram.Histogram
+			for _, w := range writers {
+				w.latency.Lock()
+				m := w.latency.Merge()
+				w.latency.Rotate()
+				w.latency.Unlock()
+				if h == nil {
+					h = m
+				} else {
+					h.Merge(m)
+				}
+			}
+
+			p50 := h.ValueAtQuantile(50)
+			p95 := h.ValueAtQuantile(95)
+			p99 := h.ValueAtQuantile(99)
+			pMax := h.ValueAtQuantile(100)
+
 			now := time.Now()
 			elapsed := time.Since(lastNow)
-			dumps := atomic.LoadUint64(&numBlocks)
-			fmt.Printf("%6s: %6.1f/sec",
+			blocks := atomic.LoadUint64(&numBlocks)
+			if i%20 == 0 {
+				fmt.Println("_elapsed___errors__ops/sec(inst)___ops/sec(cum)__p50(ms)__p95(ms)__p99(ms)_pMax(ms)")
+			}
+			i++
+			fmt.Printf("%8s %8d %14.1f %14.1f %8.1f %8.1f %8.1f %8.1f\n",
 				time.Duration(time.Since(start).Seconds()+0.5)*time.Second,
-				float64(dumps-lastNumDumps)/elapsed.Seconds())
-			if *duration > 0 || *maxBlocks > 0 {
-				// If the duration or max-blocks are limited, show the average
-				// performance since starting.
-				fmt.Printf("  %6.1f/sec", float64(dumps)/time.Since(start).Seconds())
-			}
-			if numErr > 0 {
-				fmt.Printf(" (%d total errors)", numErr)
-			}
-			fmt.Printf("\n")
-			lastNumDumps = dumps
+				numErr,
+				float64(blocks-lastBlocks)/elapsed.Seconds(),
+				float64(blocks)/time.Since(start).Seconds(),
+				time.Duration(p50).Seconds()*1000,
+				time.Duration(p95).Seconds()*1000,
+				time.Duration(p99).Seconds()*1000,
+				time.Duration(pMax).Seconds()*1000)
+			lastBlocks = blocks
 			lastNow = now
 
 		case <-done:
-			dumps := atomic.LoadUint64(&numBlocks)
+			blocks := atomic.LoadUint64(&numBlocks)
 			elapsed := time.Since(start).Seconds()
-			fmt.Printf("%6.1fs: %d total %6.1f/sec",
-				elapsed, dumps, float64(dumps)/elapsed)
-			if numErr > 0 {
-				fmt.Printf(" (%d total errors)\n", numErr)
-			}
-			fmt.Printf("\n")
+			fmt.Println("\n_elapsed___errors_________blocks___ops/sec(cum)")
+			fmt.Printf("%7.1fs %8d %14d %14.1f\n\n",
+				time.Since(start).Seconds(), numErr,
+				blocks, float64(blocks)/elapsed)
 			return
 		}
 	}

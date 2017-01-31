@@ -120,6 +120,10 @@ func (bw *blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 			errCh <- err
 		} else {
 			elapsed := time.Since(start)
+			// Avoid negative elapsed times, in case of clock jumps.
+			if elapsed < 0 {
+				elapsed = 0
+			}
 			bw.latency.Lock()
 			if err := bw.latency.Current.RecordValue(elapsed.Nanoseconds()); err != nil {
 				log.Fatal(err)

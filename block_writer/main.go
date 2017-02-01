@@ -71,6 +71,21 @@ var benchmarkName = flag.String("benchmark-name", "BenchmarkBlockWriter", "Test 
 // numBlocks keeps a global count of successfully written blocks.
 var numBlocks uint64
 
+const (
+	minLatency = 100 * time.Microsecond
+	maxLatency = 10 * time.Second
+)
+
+func clampLatency(d, min, max time.Duration) time.Duration {
+	if d < min {
+		return min
+	}
+	if d > max {
+		return max
+	}
+	return d
+}
+
 type blockWriter struct {
 	db      *sql.DB
 	rand    *rand.Rand
@@ -86,9 +101,7 @@ func newBlockWriter(db *sql.DB) *blockWriter {
 		rand: rand.New(rand.NewSource(int64(time.Now().UnixNano()))),
 	}
 	bw.latency.WindowedHistogram = hdrhistogram.NewWindowed(1,
-		(100 * time.Microsecond).Nanoseconds(),
-		(10 * time.Second).Nanoseconds(),
-		1)
+		minLatency.Nanoseconds(), maxLatency.Nanoseconds(), 1)
 	return bw
 }
 
@@ -119,11 +132,7 @@ func (bw *blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 		if _, err := bw.db.Exec(buf.String(), args...); err != nil {
 			errCh <- err
 		} else {
-			elapsed := time.Since(start)
-			// Avoid negative elapsed times, in case of clock jumps.
-			if elapsed < 0 {
-				elapsed = 0
-			}
+			elapsed := clampLatency(time.Since(start), minLatency, maxLatency)
 			bw.latency.Lock()
 			if err := bw.latency.Current.RecordValue(elapsed.Nanoseconds()); err != nil {
 				log.Fatal(err)

@@ -43,7 +43,7 @@ deps:
 	$(GO) get -d -t ./...
 
 .PHONY: build
-build: deps block_writer fakerealtime filesystem bank photos
+build: deps block_writer fakerealtime filesystem bank photos shorturl
 
 .PHONY: block_writer
 block_writer:
@@ -72,6 +72,10 @@ ledger:
 .PHONY: photos
 photos:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o photos/photos ./photos
+
+.PHONY: shorturl
+shorturl:
+	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o shorturl/shorturl ./shorturl
 
 .PHONY: check
 check:

@@ -46,6 +46,8 @@ const (
 	insertBlockStmt = `INSERT INTO blocks (block_id, writer_id, block_num, raw_bytes) VALUES`
 )
 
+var createDB = flag.Bool("create-db", true, "Attempt to create the database (root user only)")
+
 // concurrency = number of concurrent insertion processes.
 var concurrency = flag.Int("concurrency", 2*runtime.NumCPU(), "Number of concurrent writers inserting blocks")
 
@@ -170,8 +172,11 @@ func setupDatabase(dbURL string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS datablocks"); err != nil {
-		return nil, err
+
+	if *createDB {
+		if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS datablocks"); err != nil {
+			return nil, err
+		}
 	}
 
 	// Allow a maximum of concurrency+1 connections to the database.

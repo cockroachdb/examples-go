@@ -6,6 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+
+	// Hook up profiling handlers.
+	_ "net/http/pprof"
 )
 
 var httpHost = flag.String("host", "localhost", "Interface host to listen on")

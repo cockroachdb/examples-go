@@ -20,7 +20,8 @@ const (
 var (
 	validShortyRE   = regexp.MustCompile(fmt.Sprintf(`^[%s]+$`, validChars))
 	reservedShortys = map[string]struct{}{
-		"pub": {},
+		"debug": {}, // pprof endpoint.
+		"pub":   {}, // Public endpoint.
 	}
 )
 

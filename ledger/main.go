@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   scheme VARCHAR,
 
   PRIMARY KEY (account_id, posting_group_id),
-  UNIQUE (account_id, causality_id)
+  UNIQUE (account_id, causality_id) STORING(balance)
 );
 -- Could create this inline on Cockroach, but not on Postgres.
 CREATE INDEX ON accounts(transaction_id);

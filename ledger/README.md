@@ -16,15 +16,12 @@ The example may be run both against Postgres and Cockroach.
 
 ### Cockroach
 
-```bash
-./cockroach start --background
-go run main.go postgres://root@localhost:26257/ledger?sslmode=disable
-```
-
-### Postgres
+Run the example with `--help` to see all configuration options.
 
 ```bash
-docker run -d -p 5432:5432 postgres
-# When not on OSX, use 'localhost' instead
-go run main.go postgres://postgres@$(docker-machine ip default):5432?sslmode=disable
+./cockroach start --background       # for CockroachDB
+docker run -d -p 5432:5432 postgres  # for Postgres
+
+# For Postgres, change 26257 to 5432 below.
+go run $GOPATH/src/github.com/cockroachdb/examples-go/ledger/main.go --concurrency 5 --generator few-few postgres://root@localhost:26257?sslmode=disable
 ```

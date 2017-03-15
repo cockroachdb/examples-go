@@ -126,9 +126,12 @@ var generators = map[string]genFn{
 	},
 }
 
-func getLast(tx *sql.Tx, accountID string) (lastCID int64, lastBalance int64, err error) {
+func getFirst(tx *sql.Tx, accountID string) (lastCID int64, lastBalance int64, err error) {
+	// This query becomes drastically slower if we use DESC instead of ASC because
+	// it requires scanning over the entire index for accounts that match
+	// accountID in order to find the last one.
 	err = tx.QueryRow(`SELECT causality_id, balance FROM accounts `+
-		`WHERE account_id = $1 ORDER BY causality_id DESC LIMIT 1`, accountID).
+		`WHERE account_id = $1 ORDER BY causality_id ASC LIMIT 1`, accountID).
 		Scan(&lastCID, &lastBalance)
 
 	if err == sql.ErrNoRows {
@@ -144,11 +147,11 @@ func doPosting(tx *sql.Tx, req postingRequest) error {
 	var cidA, balA, cidB, balB int64
 	if !*noRunningBalance {
 		var err error
-		cidA, balA, err = getLast(tx, req.AccountA)
+		cidA, balA, err = getFirst(tx, req.AccountA)
 		if err != nil {
 			return err
 		}
-		cidB, balB, err = getLast(tx, req.AccountB)
+		cidB, balB, err = getFirst(tx, req.AccountB)
 		if err != nil {
 			return err
 		}
@@ -165,7 +168,7 @@ INSERT INTO accounts (
   posting_group_id,
   amount,
   account_id,
-  causality_id, -- strictly increasing in absolute time. Only used for running balance.
+  causality_id, -- strictly decreasing in absolute time. Only used for running balance.
   balance
 )
 VALUES (
@@ -181,8 +184,8 @@ VALUES (
   $7,   -- causality_id
   $8-$2 -- (new) balance
 )`, req.Group, req.Amount,
-		req.AccountA, cidA+1, balA,
-		req.AccountB, cidB+1, balB)
+		req.AccountA, cidA-1, balA,
+		req.AccountB, cidB-1, balB)
 	return err
 }
 

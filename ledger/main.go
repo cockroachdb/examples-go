@@ -25,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net/url"
 	"os"
@@ -62,8 +63,10 @@ CREATE INDEX ON accounts(transaction_id);
 CREATE INDEX ON accounts (posting_group_id);
 `
 
+var nSource = flag.Uint64("sources", 10, "Number of source accounts to choose from at random for transfers. Specify zero for maximum possible.")
+var nDest = flag.Uint64("destinations", 10, "Number of destination accounts to choose from at random for transfers. Specify zero for maximum possible.")
+
 var concurrency = flag.Int("concurrency", 5, "Number of concurrent actors moving money.")
-var generator = flag.String("generator", "few-few", "Type of action. One of few-few, many-many or few-one.")
 var noRunningBalance = flag.Bool("no-running-balance", false, "Do not keep a running balance per account. Avoids contention.")
 var verbose = flag.Bool("verbose", false, "Print information about each transfer.")
 
@@ -97,33 +100,20 @@ var goldenReq = postingRequest{
 	Currency: "USD",
 }
 
-type genFn func() postingRequest
-
-var generators = map[string]genFn{
-	// Uncontended.
-	"many-many": func() postingRequest {
+func generator(nSrc, nDst uint64) func() postingRequest {
+	if nSrc == 0 || nSrc >= math.MaxInt64 {
+		nSrc = math.MaxInt64
+	}
+	if nDst == 0 || nDst >= math.MaxInt64 {
+		nDst = math.MaxInt64
+	}
+	return func() postingRequest {
 		req := goldenReq
-		req.AccountA = fmt.Sprintf("acc%d", rand.Int63())
-		req.AccountB = fmt.Sprintf("acc%d", rand.Int63())
+		req.AccountA = fmt.Sprintf("acc%d", rand.Int63n(int64(nSrc)))
+		req.AccountB = fmt.Sprintf("acc%d", rand.Int63n(int64(nDst)))
 		req.Group = rand.Int63()
 		return req
-	},
-	// Mildly contended: 10 users shuffling money around among each other.
-	"few-few": func() postingRequest {
-		req := goldenReq
-		req.AccountA = fmt.Sprintf("acc%d", rand.Intn(10))
-		req.AccountB = fmt.Sprintf("acc%d", rand.Intn(10))
-		req.Group = rand.Int63()
-		return req
-	},
-	// Highly contended: 10 users all involving one peer account.
-	"few-one": func() postingRequest {
-		req := goldenReq
-		req.AccountA = fmt.Sprintf("acc%d", rand.Intn(10))
-		req.AccountB = "outbound_wash"
-		req.Group = rand.Int63()
-		return req
-	},
+	}
 }
 
 func getLast(tx *sql.Tx, accountID string) (lastCID int64, lastBalance int64, err error) {
@@ -241,12 +231,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	gen, ok := generators[*generator]
-	if !ok {
-		usage()
-		os.Exit(2)
-	}
-
+	gen := generator(*nSource, *nDest)
 	dbURL := flag.Arg(0)
 
 	parsedURL, err := url.Parse(dbURL)

@@ -217,15 +217,15 @@ func runSplit(c *cobra.Command, args []string) error {
 	for count := 0; count < numSplits; {
 		// Use the userID generation logic.
 		userID := 1 + int(rand.ExpFloat64()/rate)
-		if _, err := db.Exec(`ALTER TABLE users SPLIT AT ($1)`, userID); err != nil {
+		if _, err := db.Exec(`ALTER TABLE users SPLIT AT VALUES ($1)`, userID); err != nil {
 			log.Printf("problem splitting: %v", err)
 		} else {
 			count++
 		}
 	}
 
-	splitByUUID(db, numSplits, "photos", `ALTER TABLE photos SPLIT AT ($1)`)
-	splitByUUID(db, numSplits, "comments", `ALTER TABLE comments SPLIT AT ($1, '2016-01-01', '')`)
+	splitByUUID(db, numSplits, "photos", `ALTER TABLE photos SPLIT AT VALUES ($1)`)
+	splitByUUID(db, numSplits, "comments", `ALTER TABLE comments SPLIT AT VALUES ($1, '2016-01-01', '')`)
 	return nil
 }
 

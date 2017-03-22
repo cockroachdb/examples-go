@@ -198,7 +198,7 @@ func setupDatabase(dbURL string) (*sql.DB, error) {
 	if *splits > 0 {
 		r := rand.New(rand.NewSource(int64(time.Now().UnixNano())))
 		for i := 0; i < *splits; i++ {
-			if _, err := db.Exec(`ALTER TABLE blocks SPLIT AT ($1, '', 0)`, r.Int63()); err != nil {
+			if _, err := db.Exec(`ALTER TABLE blocks SPLIT AT VALUES ($1, '', 0)`, r.Int63()); err != nil {
 				return nil, err
 			}
 		}

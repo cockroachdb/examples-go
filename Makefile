@@ -65,6 +65,10 @@ hotspot:
 bank:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o bank/bank ./bank
 
+.PHONY: bank2
+bank2:
+	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o bank2/bank2 ./bank2
+
 .PHONY: ledger
 ledger:
 	$(GO) build -tags '$(TAGS)' $(GOFLAGS) -ldflags '$(LDFLAGS)' -v -i -o ledger/ledger ./ledger

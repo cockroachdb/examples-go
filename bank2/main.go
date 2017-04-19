@@ -28,9 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	// Import postgres driver.
 	"github.com/cockroachdb/cockroach-go/crdb"
-	_ "github.com/lib/pq"
 )
 
 const systemAccountID = 0
@@ -42,6 +40,7 @@ var numAccounts = flag.Int("num-accounts", 100, "Number of accounts.")
 var concurrency = flag.Int("concurrency", 16, "Number of concurrent actors moving money.")
 var contention = flag.String("contention", "low", "Contention model {low | high}.")
 var balanceCheckInterval = flag.Duration("balance-check-interval", time.Second, "Interval of balance check.")
+var parallelStmts = flag.Bool("parallel-stmts", false, "Run independent statements in parallel.")
 
 var txnCount int32
 var successCount int32
@@ -60,7 +59,8 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 	useSystemAccount := *contention == "high"
 
 	for !transfersComplete() {
-		var readDuration, writeDuration time.Duration
+		var startWrite time.Time
+		var readDuration time.Duration
 		var fromBalance, toBalance int
 		from, to := rand.Intn(*numAccounts)+1, rand.Intn(*numAccounts)+1
 		if from == to {
@@ -105,31 +105,35 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 					panic(fmt.Sprintf("got unexpected account %d", id))
 				}
 			}
-			startWrite := time.Now()
+			startWrite = time.Now()
 			if fromBalance < amount {
 				return nil
 			}
-			insert := `INSERT INTO transaction (id, txn_ref) VALUES ($1, $2);`
+			insertTxn := `INSERT INTO transaction (id, txn_ref) VALUES ($1, $2)`
+			insertTxnLeg := `INSERT INTO transaction_leg (account_id, amount, running_balance, txn_id) VALUES ($1, $2, $3, $4)`
+			updateAcct := `UPDATE account SET balance = $1 WHERE id = $2`
+			if *parallelStmts {
+				const parallelize = ` RETURNING NOTHING`
+				insertTxn += parallelize
+				insertTxnLeg += parallelize
+				updateAcct += parallelize
+			}
 			txnID := atomic.AddInt32(&txnCount, 1)
-			_, err = tx.Exec(insert, txnID, fmt.Sprintf("txn %d", txnID))
-			if err != nil {
+			if _, err = tx.Exec(insertTxn, txnID, fmt.Sprintf("txn %d", txnID)); err != nil {
 				return err
 			}
-			insert = `INSERT INTO transaction_leg (account_id, amount, running_balance, txn_id) VALUES ($1, $2, $3, $4);`
-			if _, err = tx.Exec(insert, from, -amount, fromBalance-amount, txnID); err != nil {
+			if _, err = tx.Exec(insertTxnLeg, from, -amount, fromBalance-amount, txnID); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(insert, to, amount, toBalance+amount, txnID); err != nil {
+			if _, err = tx.Exec(insertTxnLeg, to, amount, toBalance+amount, txnID); err != nil {
 				return err
 			}
-			update := `UPDATE account SET balance = $1 WHERE id = $2;`
-			if _, err = tx.Exec(update, toBalance+amount, to); err != nil {
+			if _, err = tx.Exec(updateAcct, toBalance+amount, to); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(update, fromBalance-amount, from); err != nil {
+			if _, err = tx.Exec(updateAcct, fromBalance-amount, from); err != nil {
 				return err
 			}
-			writeDuration = time.Since(startWrite)
 			return nil
 		}); err != nil {
 			log.Printf("failed transaction: %v", err)
@@ -138,7 +142,7 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 		atomic.AddInt32(&successCount, 1)
 		if fromBalance >= amount {
 			atomic.AddInt64(&aggr.read, readDuration.Nanoseconds())
-			atomic.AddInt64(&aggr.write, writeDuration.Nanoseconds())
+			atomic.AddInt64(&aggr.write, time.Since(startWrite).Nanoseconds())
 			atomic.AddInt64(&aggr.total, time.Since(start).Nanoseconds())
 		}
 	}

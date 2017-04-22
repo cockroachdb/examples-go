@@ -54,6 +54,8 @@ var concurrency = flag.Int("concurrency", 2*runtime.NumCPU(), "Number of concurr
 // batch = number of blocks to insert in a single SQL statement.
 var batch = flag.Int("batch", 1, "Number of blocks to insert in a single SQL statement")
 
+var prepare = flag.Bool("prepare", false, "Use prepared statements for inserts")
+
 var splits = flag.Int("splits", 0, "Number of splits to perform before starting normal operations")
 
 var tolerateErrors = flag.Bool("tolerate-errors", false, "Keep running on error")
@@ -115,23 +117,66 @@ func (bw *blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 	id := uuid.NewV4().String()
 	var blockCount uint64
 
-	for {
+	var runStmt func(query string, args []interface{}) error
+	if *prepare {
 		var buf bytes.Buffer
-		var args []interface{}
-		fmt.Fprintf(&buf, "%s", insertBlockStmt)
-
+		fmt.Fprintf(&buf, "%s ", insertBlockStmt)
+		// n keeps track of the placeholder we are on.
+		// $1 is always used for the id which remains constant throughout the batch.
+		n := 2
 		for i := 0; i < *batch; i++ {
-			blockID := bw.rand.Int63()
-			blockCount++
-			args = append(args, bw.randomBlock())
 			if i > 0 {
 				fmt.Fprintf(&buf, ",")
 			}
-			fmt.Fprintf(&buf, ` (%d, '%s', %d, $%d)`, blockID, id, blockCount, i+1)
+			fmt.Fprintf(&buf, ` ($%d, $1, $%d, $%d)`, n, n+1, n+2)
+			n += 3
+		}
+		stmt, err := bw.db.Prepare(buf.String())
+		if err != nil {
+			log.Fatal(err)
+		}
+		runStmt = func(_ string, args []interface{}) error {
+			_, err := stmt.Exec(args...)
+			return err
+		}
+	} else {
+		runStmt = func(query string, args []interface{}) error {
+			_, err := bw.db.Exec(query, args...)
+			return err
+		}
+	}
+
+	var args []interface{}
+	if *prepare {
+		args = make([]interface{}, 1+3*(*batch))
+		args[0] = id
+	} else {
+		args = make([]interface{}, *batch)
+	}
+	for {
+		var buf bytes.Buffer
+		fmt.Fprintf(&buf, "%s ", insertBlockStmt)
+		n := 1
+		for i := 0; i < *batch; i++ {
+			blockID := bw.rand.Int63()
+			blockCount++
+			block := bw.randomBlock()
+			if *prepare {
+				args[n] = blockID
+				args[n+1] = blockCount
+				args[n+2] = block
+				n += 3
+			} else {
+				args[i] = block
+				if i > 0 {
+					fmt.Fprintf(&buf, ",")
+				}
+				fmt.Fprintf(&buf, ` (%d, '%s', %d, $%d)`, blockID, id, blockCount, i+1)
+			}
 		}
 
 		start := time.Now()
-		if _, err := bw.db.Exec(buf.String(), args...); err != nil {
+		if err := runStmt(buf.String(), args); err != nil {
 			errCh <- err
 		} else {
 			elapsed := clampLatency(time.Since(start), minLatency, maxLatency)

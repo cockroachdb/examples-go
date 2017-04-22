@@ -54,6 +54,8 @@ var concurrency = flag.Int("concurrency", 2*runtime.NumCPU(), "Number of concurr
 // batch = number of blocks to insert in a single SQL statement.
 var batch = flag.Int("batch", 1, "Number of blocks to insert in a single SQL statement")
 
+var prepare = flag.Bool("prepare", false, "Use prepared statements for inserts")
+
 var splits = flag.Int("splits", 0, "Number of splits to perform before starting normal operations")
 
 var tolerateErrors = flag.Bool("tolerate-errors", false, "Keep running on error")
@@ -107,12 +109,63 @@ func newBlockWriter(db *sql.DB) *blockWriter {
 	return bw
 }
 
-// run is an infinite loop in which the blockWriter continuously attempts to
-// write blocks of random data into a table in cockroach DB.
-func (bw *blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
-	defer wg.Done()
+// record the stats since the input start time. Returns true if maxBlocks has
+// been reached and blockWriter should exit.
+func (bw *blockWriter) record(start time.Time) bool {
+	elapsed := clampLatency(time.Since(start), minLatency, maxLatency)
+	bw.latency.Lock()
+	if err := bw.latency.Current.RecordValue(elapsed.Nanoseconds()); err != nil {
+		log.Fatal(err)
+	}
+	bw.latency.Unlock()
+	v := atomic.AddUint64(&numBlocks, uint64(*batch))
+	return *maxBlocks > 0 && v >= *maxBlocks
+}
 
-	id := uuid.NewV4().String()
+func (bw *blockWriter) runPrepared(id string, errCh chan<- error) {
+	var blockCount uint64
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "%s ", insertBlockStmt)
+	// n keeps track of the placeholder we are on.
+	// $1 is always used for the id which remains constant throughout the batch.
+	n := 2
+	for i := 0; i < *batch; i++ {
+		if i > 0 {
+			fmt.Fprintf(&buf, ",")
+		}
+		fmt.Fprintf(&buf, ` ($%d, $1, $%d, $%d)`, n, n+1, n+2)
+		n += 3
+	}
+	stmt, err := bw.db.Prepare(buf.String())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	args := make([]interface{}, 1+3*(*batch))
+	args[0] = id
+	for {
+		n := 1
+		for i := 0; i < *batch; i++ {
+			blockCount++
+			args[n] = bw.rand.Int63()
+			args[n+1] = blockCount
+			args[n+2] = bw.randomBlock()
+			n += 3
+		}
+
+		start := time.Now()
+		if _, err := stmt.Exec(args...); err != nil {
+			errCh <- err
+		} else {
+			if bw.record(start) {
+				return
+			}
+		}
+	}
+}
+
+func (bw *blockWriter) runExec(id string, errCh chan<- error) {
 	var blockCount uint64
 
 	for {
@@ -134,17 +187,24 @@ func (bw *blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 		if _, err := bw.db.Exec(buf.String(), args...); err != nil {
 			errCh <- err
 		} else {
-			elapsed := clampLatency(time.Since(start), minLatency, maxLatency)
-			bw.latency.Lock()
-			if err := bw.latency.Current.RecordValue(elapsed.Nanoseconds()); err != nil {
-				log.Fatal(err)
-			}
-			bw.latency.Unlock()
-			v := atomic.AddUint64(&numBlocks, uint64(*batch))
-			if *maxBlocks > 0 && v >= *maxBlocks {
+			if bw.record(start) {
 				return
 			}
 		}
+	}
+}
+
+// run is an infinite loop in which the blockWriter continuously attempts to
+// write blocks of random data into a table in cockroach DB.
+func (bw *blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	id := uuid.NewV4().String()
+
+	if *prepare {
+		bw.runPrepared(id, errCh)
+	} else {
+		bw.runExec(id, errCh)
 	}
 }
 

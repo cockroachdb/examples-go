@@ -22,10 +22,11 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/pkg/errors"
-
 	// Import postgres driver.
 	_ "github.com/lib/pq"
+
+	"github.com/pkg/errors"
+	"golang.org/x/net/context"
 )
 
 var errNoUser = errors.New("no user found")
@@ -77,19 +78,19 @@ CREATE TABLE IF NOT EXISTS comments (
 )
 
 // openDB opens the database connection according to the context.
-func openDB(ctx Context) (*sql.DB, error) {
-	return sql.Open("postgres", ctx.DBUrl)
+func openDB(cfg Config) (*sql.DB, error) {
+	return sql.Open("postgres", cfg.DBUrl)
 }
 
 // initSchema creates the database schema if it doesn't exist.
-func initSchema(db *sql.DB) error {
-	_, err := db.Exec(photosSchema)
+func initSchema(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, photosSchema)
 	return err
 }
 
 // dropDatabase drops the database.
-func dropDatabase(db *sql.DB) error {
-	_, err := db.Exec("DROP DATABASE IF EXISTS photos;")
+func dropDatabase(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, "DROP DATABASE IF EXISTS photos;")
 	return err
 }
 
@@ -104,12 +105,12 @@ func randString(n int) string {
 }
 
 // userExists looks up a user by ID.
-func userExists(tx *sql.Tx, userID int) (bool, error) {
+func userExists(ctx context.Context, tx *sql.Tx, userID int) (bool, error) {
 	var id int
 	const selectSQL = `
 SELECT id FROM users WHERE id = $1;
 `
-	err := tx.QueryRow(selectSQL, userID).Scan(&id)
+	err := tx.QueryRowContext(ctx, selectSQL, userID).Scan(&id)
 	switch err {
 	case sql.ErrNoRows:
 		return false, nil
@@ -122,12 +123,12 @@ SELECT id FROM users WHERE id = $1;
 
 // findClosestUserByID selects the first user which exists with
 // id >= userID. Returns the found user ID or an error.
-func findClosestUserByID(tx *sql.Tx, userID int) (int, error) {
+func findClosestUserByID(ctx context.Context, tx *sql.Tx, userID int) (int, error) {
 	var id int
 	const selectSQL = `
 SELECT id FROM users WHERE id >= $1 ORDER BY id LIMIT 1;
 `
-	err := tx.QueryRow(selectSQL, userID).Scan(&id)
+	err := tx.QueryRowContext(ctx, selectSQL, userID).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, errNoUser
 	}
@@ -135,8 +136,8 @@ SELECT id FROM users WHERE id >= $1 ORDER BY id LIMIT 1;
 }
 
 // createUser creates a new user with random name and address strings.
-func createUser(tx *sql.Tx, userID int) error {
-	exists, err := userExists(tx, userID)
+func createUser(ctx context.Context, tx *sql.Tx, userID int) error {
+	exists, err := userExists(ctx, tx, userID)
 	if err != nil || exists {
 		return err
 	}
@@ -149,7 +150,7 @@ INSERT INTO users VALUES ($1, 0, 0, $2, $3);
 	const maxAddrLen = 100
 	name := randString(minNameLen + rand.Intn(maxNameLen-minNameLen))
 	addr := randString(minAddrLen + rand.Intn(maxAddrLen-minAddrLen))
-	_, err = tx.Exec(insertSQL, userID, name, addr)
+	_, err = tx.ExecContext(ctx, insertSQL, userID, name, addr)
 	return err
 }
 
@@ -157,8 +158,8 @@ INSERT INTO users VALUES ($1, 0, 0, $2, $3);
 // the only method in this interface which doesn't match an existing
 // user except for createUser). It then creates a new photo for the
 // new or pre-existing user.
-func createPhoto(tx *sql.Tx, userID int) error {
-	if err := createUser(tx, userID); err != nil {
+func createPhoto(ctx context.Context, tx *sql.Tx, userID int) error {
+	if err := createUser(ctx, tx, userID); err != nil {
 		return err
 	}
 
@@ -170,14 +171,14 @@ INSERT INTO photos VALUES (DEFAULT, $1, 0, $2, $3, $4, NOW());
 	caption := randString(minCaptionLen + rand.Intn(maxCaptionLen-minCaptionLen))
 	latitude := rand.Float32() * 90
 	longitude := rand.Float32() * 180
-	if _, err := tx.Exec(insertSQL, userID, caption, latitude, longitude); err != nil {
+	if _, err := tx.ExecContext(ctx, insertSQL, userID, caption, latitude, longitude); err != nil {
 		return err
 	}
 
 	const updateSQL = `
 UPDATE users SET photoCount = photoCount + 1 WHERE id = $1;
 `
-	if _, err := tx.Exec(updateSQL, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateSQL, userID); err != nil {
 		return err
 	}
 	return nil
@@ -186,8 +187,8 @@ UPDATE users SET photoCount = photoCount + 1 WHERE id = $1;
 // createComment chooses a random photo from a user with the closest
 // matching user ID and generates a random author ID to author the
 // comment. Counts are updated on the photo and author user.
-func createComment(tx *sql.Tx, userID int) error {
-	photoID, err := chooseRandomPhoto(tx, userID)
+func createComment(ctx context.Context, tx *sql.Tx, userID int) error {
+	photoID, err := chooseRandomPhoto(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
@@ -199,7 +200,7 @@ INSERT INTO comments VALUES ($1, DEFAULT, $2, $3, NOW());
 	const minMessageLen = 32
 	const maxMessageLen = 1024
 	message := randString(minMessageLen + rand.Intn(maxMessageLen-minMessageLen))
-	if _, err := tx.Exec(insertSQL, photoID, authorID, message); err != nil {
+	if _, err := tx.ExecContext(ctx, insertSQL, photoID, authorID, message); err != nil {
 		log.Printf("insert into photos failed: %s", err)
 		return err
 	}
@@ -207,14 +208,14 @@ INSERT INTO comments VALUES ($1, DEFAULT, $2, $3, NOW());
 	const updatePhotoSQL = `
 UPDATE photos SET commentCount = commentCount + 1 WHERE id = $1;
 `
-	if _, err := tx.Exec(updatePhotoSQL, photoID); err != nil {
+	if _, err := tx.ExecContext(ctx, updatePhotoSQL, photoID); err != nil {
 		return err
 	}
 
 	const updateUserSQL = `
 UPDATE users SET commentCount = commentCount + 1 WHERE id = $1;
 `
-	if _, err := tx.Exec(updateUserSQL, authorID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateUserSQL, authorID); err != nil {
 		return err
 	}
 	return nil
@@ -223,15 +224,15 @@ UPDATE users SET commentCount = commentCount + 1 WHERE id = $1;
 // listPhotos queries up to 100 photos, sorted by timestamp in
 // descending order, for the first user with ID >= userID. If photoIDs
 // is not nil, stores the queried photo IDs in photoIDs.
-func listPhotos(tx *sql.Tx, userID int, photoIDs *[][]byte) error {
+func listPhotos(ctx context.Context, tx *sql.Tx, userID int, photoIDs *[][]byte) error {
 	var err error
-	userID, err = findClosestUserByID(tx, userID)
+	userID, err = findClosestUserByID(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
 	const selectSQL = `
 SELECT id, caption, commentCount, latitude, longitude, timestamp FROM photos WHERE userID = $1 ORDER BY timestamp DESC LIMIT 100`
-	rows, err := tx.Query(selectSQL, userID)
+	rows, err := tx.QueryContext(ctx, selectSQL, userID)
 	switch {
 	case err == sql.ErrNoRows:
 		return nil
@@ -266,9 +267,9 @@ SELECT id, caption, commentCount, latitude, longitude, timestamp FROM photos WHE
 // chooseRandomPhoto selects a random photo for the specified
 // user or an existing user with the closest user ID. Returns
 // the photo ID or an error.
-func chooseRandomPhoto(tx *sql.Tx, userID int) ([]byte, error) {
+func chooseRandomPhoto(ctx context.Context, tx *sql.Tx, userID int) ([]byte, error) {
 	photoIDs := [][]byte{}
-	if err := listPhotos(tx, userID, &photoIDs); err != nil {
+	if err := listPhotos(ctx, tx, userID, &photoIDs); err != nil {
 		return nil, err
 	}
 	if len(photoIDs) == 0 {
@@ -281,14 +282,14 @@ func chooseRandomPhoto(tx *sql.Tx, userID int) ([]byte, error) {
 // listComments chooses a random photo and lists up to 100 of its
 // comments. Returns the photoID or an error. If the commentIDs slice
 // is not nil, it's set to the queried comments' IDs.
-func listComments(tx *sql.Tx, userID int, commentIDs *[][]byte) ([]byte, error) {
-	photoID, err := chooseRandomPhoto(tx, userID)
+func listComments(ctx context.Context, tx *sql.Tx, userID int, commentIDs *[][]byte) ([]byte, error) {
+	photoID, err := chooseRandomPhoto(ctx, tx, userID)
 	if err != nil {
 		return nil, err
 	}
 	const selectSQL = `SELECT commentID, userID, message, timestamp FROM comments ` +
 		`WHERE photoID = $1 ORDER BY timestamp DESC LIMIT 100`
-	rows, err := tx.Query(selectSQL, photoID)
+	rows, err := tx.QueryContext(ctx, selectSQL, photoID)
 	switch {
 	case err == sql.ErrNoRows:
 		return photoID, nil
@@ -322,9 +323,9 @@ func listComments(tx *sql.Tx, userID int, commentIDs *[][]byte) ([]byte, error) 
 // chooseRandomComment selects a random comment for the specified
 // user or an existing user with the closest user ID. Returns
 // the photo and comment IDs or an error.
-func chooseRandomComment(tx *sql.Tx, userID int) ([]byte, []byte, error) {
+func chooseRandomComment(ctx context.Context, tx *sql.Tx, userID int) ([]byte, []byte, error) {
 	commentIDs := [][]byte{}
-	photoID, err := listComments(tx, userID, &commentIDs)
+	photoID, err := listComments(ctx, tx, userID, &commentIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -335,8 +336,8 @@ func chooseRandomComment(tx *sql.Tx, userID int) ([]byte, []byte, error) {
 	return photoID, commentID, nil
 }
 
-func updatePhoto(tx *sql.Tx, userID int) error {
-	photoID, err := chooseRandomPhoto(tx, userID)
+func updatePhoto(ctx context.Context, tx *sql.Tx, userID int) error {
+	photoID, err := chooseRandomPhoto(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
@@ -347,14 +348,14 @@ UPDATE photos SET caption = $1 WHERE id = $2;
 	const minCaptionLen = 10
 	const maxCaptionLen = 200
 	caption := randString(minCaptionLen + rand.Intn(maxCaptionLen-minCaptionLen))
-	if _, err := tx.Exec(updatePhotoSQL, caption, photoID); err != nil {
+	if _, err := tx.ExecContext(ctx, updatePhotoSQL, caption, photoID); err != nil {
 		return err
 	}
 	return nil
 }
 
-func updateComment(tx *sql.Tx, userID int) error {
-	photoID, commentID, err := chooseRandomComment(tx, userID)
+func updateComment(ctx context.Context, tx *sql.Tx, userID int) error {
+	photoID, commentID, err := chooseRandomComment(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
@@ -365,56 +366,56 @@ UPDATE comments SET message = $1 WHERE photoID = $2 AND commentID = $3;
 	const minMessageLen = 10
 	const maxMessageLen = 200
 	message := randString(minMessageLen + rand.Intn(maxMessageLen-minMessageLen))
-	if _, err := tx.Exec(updateCommentSQL, message, photoID, commentID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateCommentSQL, message, photoID, commentID); err != nil {
 		return err
 	}
 	return nil
 }
 
-func deletePhoto(tx *sql.Tx, userID int) error {
-	photoID, err := chooseRandomPhoto(tx, userID)
+func deletePhoto(ctx context.Context, tx *sql.Tx, userID int) error {
+	photoID, err := chooseRandomPhoto(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
 	const deletePhotoSQL = `
 DELETE FROM photos WHERE id = $1;
 `
-	if _, err := tx.Exec(deletePhotoSQL, photoID); err != nil {
+	if _, err := tx.ExecContext(ctx, deletePhotoSQL, photoID); err != nil {
 		return err
 	}
 
 	const updateSQL = `
 UPDATE users SET photoCount = photoCount - 1 WHERE id = $1;
 `
-	if _, err := tx.Exec(updateSQL, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateSQL, userID); err != nil {
 		return err
 	}
 	return nil
 }
 
-func deleteComment(tx *sql.Tx, userID int) error {
-	photoID, commentID, err := chooseRandomComment(tx, userID)
+func deleteComment(ctx context.Context, tx *sql.Tx, userID int) error {
+	photoID, commentID, err := chooseRandomComment(ctx, tx, userID)
 	if err != nil {
 		return err
 	}
 	const deleteCommentSQL = `
 DELETE FROM comments WHERE photoID = $1 AND commentID = $2;
 `
-	if _, err := tx.Exec(deleteCommentSQL, photoID, commentID); err != nil {
+	if _, err := tx.ExecContext(ctx, deleteCommentSQL, photoID, commentID); err != nil {
 		return err
 	}
 
 	const updatePhotoSQL = `
 UPDATE photos SET commentCount = commentCount - 1 WHERE id = $1;
 `
-	if _, err := tx.Exec(updatePhotoSQL, photoID); err != nil {
+	if _, err := tx.ExecContext(ctx, updatePhotoSQL, photoID); err != nil {
 		return err
 	}
 
 	const updateUserSQL = `
 UPDATE users SET commentCount = commentCount - 1 WHERE id = $1;
 `
-	if _, err := tx.Exec(updateUserSQL, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateUserSQL, userID); err != nil {
 		return err
 	}
 	return nil

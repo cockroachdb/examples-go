@@ -18,47 +18,55 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cockroachdb/cockroach-go/testserver"
 )
 
-func initTestDB(t *testing.T, numUsers int) (Context, func()) {
-	db, stop := testserver.NewDBForTestWithDatabase(t, "photos")
-	if err := initSchema(db); err != nil {
-		stop()
-		t.Fatal(err)
-	}
-	ctx := Context{
-		DB:       db,
-		NumUsers: numUsers,
-	}
-	return ctx, stop
-}
-
 // TestAllOps runs every operation once and ensures that they complete
 // without error.
 func TestAllOps(t *testing.T) {
-	ctx, stop := initTestDB(t, 1)
+	db, stop := testserver.NewDBForTestWithDatabase(t, "photos")
 	defer stop()
+
+	ctx := context.Background()
+
+	if err := initSchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		DB:       db,
+		NumUsers: 1,
+	}
 
 	for _, op := range ops {
 		t.Logf("running %s", op.name)
-		if err := runUserOp(ctx, 1, op.typ); err != nil {
+		if err := runUserOp(ctx, cfg, 1, op.typ); err != nil {
 			t.Error(err)
 		}
 	}
 }
 
 func TestCommentWithoutPhotos(t *testing.T) {
-	ctx, stop := initTestDB(t, 1)
+	db, stop := testserver.NewDBForTestWithDatabase(t, "photos")
 	defer stop()
 
-	if err := runUserOp(ctx, 1, createUserOp); err != nil {
+	ctx := context.Background()
+
+	if err := initSchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		DB:       db,
+		NumUsers: 1,
+	}
+
+	if err := runUserOp(ctx, cfg, 1, createUserOp); err != nil {
 		t.Error(err)
 	}
 
-	if err := runUserOp(ctx, 1, createCommentOp); err == nil {
+	if err := runUserOp(ctx, cfg, 1, createCommentOp); err == nil {
 		t.Error("unexpected success creating comment with no photos")
 	} else if err != errNoPhoto {
 		t.Errorf("expected errNoPhoto, got %s", err)

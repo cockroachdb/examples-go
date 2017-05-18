@@ -30,9 +30,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cockroachdb/cockroach/pkg/util/stop"
-	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 	"github.com/spf13/cobra"
+	"golang.org/x/net/context"
+
+	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 )
 
 // pflagValue wraps flag.Value and implements the extra methods of the
@@ -61,8 +62,8 @@ var usage = map[string]string{
 	"benchmark-name": "name of benchmark to report for Go benchmark results",
 }
 
-// A Context holds configuration data.
-type Context struct {
+// A Config holds configuration data.
+type Config struct {
 	// DBUrl is the URL to the database server.
 	DBUrl string
 	// NumUsers is the number of concurrent users generating load.
@@ -74,7 +75,7 @@ type Context struct {
 	BenchmarkName string
 }
 
-var ctx = Context{
+var cfg = Config{
 	DBUrl:         "postgresql://root@localhost:26257/photos?sslmode=disable",
 	NumUsers:      1,
 	BenchmarkName: "BenchmarkPhotos",
@@ -95,55 +96,55 @@ more activity than high ones.
 }
 
 func runLoad(c *cobra.Command, args []string) error {
-	log.Printf("generating load for %d concurrent users...", ctx.NumUsers)
-	db, err := openDB(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log.Printf("generating load for %d concurrent users...", cfg.NumUsers)
+	db, err := openDB(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	if err := initSchema(db); err != nil {
+	if err := initSchema(ctx, db); err != nil {
 		log.Fatal(err)
 	}
-	ctx.DB = db
-
-	stopper := stop.NewStopper()
-	stopper.RunWorker(func() {
-		startStats(stopper)
-	})
-	for i := 0; i < ctx.NumUsers; i++ {
-		stopper.RunWorker(func() {
-			startUser(ctx, stopper)
-		})
-	}
+	cfg.DB = db
 
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, os.Kill)
 	signal.Notify(signalCh, syscall.SIGTERM)
 
-	// Block until one of the signals above is received or the stopper
-	// is stopped externally.
-	select {
-	case <-stopper.ShouldStop():
-	case <-signalCh:
-		stopper.Stop()
+	go func() {
+		<-signalCh
+		cancel()
+	}()
+
+	errChan := make(chan error, 1+cfg.NumUsers)
+	go func() {
+		errChan <- startStats(ctx)
+	}()
+	for i := 0; i < cfg.NumUsers; i++ {
+		go func() {
+			errChan <- startUser(ctx, cfg)
+		}()
 	}
 
-	select {
-	case <-signalCh:
-		return fmt.Errorf("second signal received, initiating hard shutdown")
-	case <-time.After(time.Minute):
-		return fmt.Errorf("time limit reached, initiating hard shutdown")
-	case <-stopper.IsStopped():
-		log.Println("load generation complete")
-
-		// Output results that mimic Go's built-in benchmark format.
-		stats.Lock()
-		elapsed := time.Now().Sub(stats.start)
-		fmt.Println("Go benchmark results:")
-		fmt.Printf("%s\t%8d\t%12.1f ns/op\n",
-			ctx.BenchmarkName, stats.totalOps, float64(elapsed.Nanoseconds())/float64(stats.totalOps))
-		stats.Unlock()
+	for i := 0; i < 1+cfg.NumUsers; i++ {
+		if err := <-errChan; err != ctx.Err() {
+			return err
+		}
 	}
+
+	log.Println("load generation complete")
+
+	// Output results that mimic Go's built-in benchmark format.
+	stats.Lock()
+	elapsed := time.Now().Sub(stats.start)
+	fmt.Println("Go benchmark results:")
+	fmt.Printf("%s\t%8d\t%12.1f ns/op\n",
+		cfg.BenchmarkName, stats.totalOps, float64(elapsed.Nanoseconds())/float64(stats.totalOps))
+	stats.Unlock()
+
 	return nil
 }
 
@@ -168,13 +169,15 @@ Split all tables in the photos database to start fresh.
 }
 
 func runDrop(c *cobra.Command, args []string) error {
+	ctx := context.Background()
+
 	log.Printf("dropping photos database")
-	db, err := openDB(ctx)
+	db, err := openDB(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	if err := dropDatabase(db); err != nil {
+	if err := dropDatabase(ctx, db); err != nil {
 		log.Fatal(err)
 	}
 	return nil
@@ -192,6 +195,8 @@ func splitByUUID(db *sql.DB, numSplits int, tableName string, statementString st
 }
 
 func runSplit(c *cobra.Command, args []string) error {
+	ctx := context.Background()
+
 	if len(args) != 1 {
 		return fmt.Errorf("argument required: <num splits>")
 	}
@@ -202,16 +207,16 @@ func runSplit(c *cobra.Command, args []string) error {
 	numSplits := int(n)
 	log.Printf("splitting photos database into %d chunks", numSplits)
 
-	db, err := openDB(ctx)
+	db, err := openDB(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
 
-	if err := initSchema(db); err != nil {
+	if err := initSchema(ctx, db); err != nil {
 		log.Fatal(err)
 	}
-	ctx.DB = db
+	cfg.DB = db
 
 	log.Printf(`splitting table "users"`)
 	for count := 0; count < numSplits; {
@@ -242,9 +247,9 @@ func init() {
 		pf.Var(pflagValue{f.Value}, normalizeStdFlagName(f.Name), f.Usage)
 	})
 	// Add persistent flags to the top-level command.
-	loadCmd.PersistentFlags().IntVarP(&ctx.NumUsers, "users", "", ctx.NumUsers, usage["users"])
-	loadCmd.PersistentFlags().StringVarP(&ctx.DBUrl, "db", "", ctx.DBUrl, usage["db"])
-	loadCmd.PersistentFlags().StringVarP(&ctx.BenchmarkName, "benchmark-name", "", ctx.BenchmarkName,
+	loadCmd.PersistentFlags().IntVarP(&cfg.NumUsers, "users", "", cfg.NumUsers, usage["users"])
+	loadCmd.PersistentFlags().StringVarP(&cfg.DBUrl, "db", "", cfg.DBUrl, usage["db"])
+	loadCmd.PersistentFlags().StringVarP(&cfg.BenchmarkName, "benchmark-name", "", cfg.BenchmarkName,
 		usage["benchmark-name"])
 }
 

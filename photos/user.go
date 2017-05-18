@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach-go/crdb"
-	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/codahale/hdrhistogram"
 	"github.com/pkg/errors"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -115,7 +115,7 @@ func randomOp() *opDesc {
 	return ops[len(ops)-1]
 }
 
-func startStats(stopper *stop.Stopper) {
+func startStats(ctx context.Context) error {
 	var lastOps int
 	ticker := time.NewTicker(statsInterval)
 	for {
@@ -126,21 +126,21 @@ func startStats(stopper *stop.Stopper) {
 			log.Printf("%d ops, %d no-user, %d no-photo, %d errs (%.2f/s)", stats.totalOps, stats.noUserOps, stats.noPhotoOps, stats.failedOps, opsPerSec)
 			lastOps = stats.totalOps
 			stats.Unlock()
-		case <-stopper.ShouldStop():
+		case <-ctx.Done():
 			stats.Lock()
 			if !stats.computing {
 				stats.computing = true
 				//showHistogram()
 			}
 			stats.Unlock()
-			return
+			return ctx.Err()
 		}
 	}
 }
 
-// startUser simulates a stream of user events until the stopper
-// indicates it's time to exit.
-func startUser(ctx Context, stopper *stop.Stopper) {
+// startUser simulates a stream of user events until the context indicates
+// it's time to exit.
+func startUser(ctx context.Context, cfg Config) error {
 	h := fnv.New32()
 	var buf [8]byte
 
@@ -158,52 +158,51 @@ func startUser(ctx Context, stopper *stop.Stopper) {
 		userID := randomUser()
 		op := randomOp()
 
-		if err := stopper.RunTask(func() {
-			err := runUserOp(ctx, userID, op.typ)
-			stats.Lock()
-			_ = stats.hist.RecordValue(int64(userID))
-			stats.totalOps++
-			stats.opCounts[op.typ]++
-			switch {
-			case err == errNoUser:
-				stats.noUserOps++
-			case err == errNoPhoto:
-				stats.noPhotoOps++
-			case err != nil:
-				stats.failedOps++
-				log.Printf("failed to run %s op for %d: %s", op.name, userID, err)
-			}
-			stats.Unlock()
-		}); err != nil {
-			return
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		err := runUserOp(ctx, cfg, userID, op.typ)
+		stats.Lock()
+		_ = stats.hist.RecordValue(int64(userID))
+		stats.totalOps++
+		stats.opCounts[op.typ]++
+		switch {
+		case err == errNoUser:
+			stats.noUserOps++
+		case err == errNoPhoto:
+			stats.noPhotoOps++
+		case err != nil:
+			stats.failedOps++
+			log.Printf("failed to run %s op for %d: %s", op.name, userID, err)
+		}
+		stats.Unlock()
 	}
 }
 
 // runUserOp starts a transaction and creates the user if it doesn't
 // yet exist.
-func runUserOp(ctx Context, userID, opType int) error {
-	return crdb.ExecuteTx(ctx.DB, func(tx *sql.Tx) error {
+func runUserOp(ctx context.Context, cfg Config, userID, opType int) error {
+	return crdb.ExecuteTx(cfg.DB, func(tx *sql.Tx) error {
 		switch opType {
 		case createUserOp:
-			return createUser(tx, userID)
+			return createUser(ctx, tx, userID)
 		case createPhotoOp:
-			return createPhoto(tx, userID)
+			return createPhoto(ctx, tx, userID)
 		case createCommentOp:
-			return createComment(tx, userID)
+			return createComment(ctx, tx, userID)
 		case listPhotosOp:
-			return listPhotos(tx, userID, nil)
+			return listPhotos(ctx, tx, userID, nil)
 		case listCommentsOp:
-			_, err := listComments(tx, userID, nil)
+			_, err := listComments(ctx, tx, userID, nil)
 			return err
 		case updatePhotoOp:
-			return updatePhoto(tx, userID)
+			return updatePhoto(ctx, tx, userID)
 		case updateCommentOp:
-			return updateComment(tx, userID)
+			return updateComment(ctx, tx, userID)
 		case deletePhotoOp:
-			return deletePhoto(tx, userID)
+			return deletePhoto(ctx, tx, userID)
 		case deleteCommentOp:
-			return deleteComment(tx, userID)
+			return deleteComment(ctx, tx, userID)
 		default:
 			return errors.Errorf("unsupported op type: %d", opType)
 		}

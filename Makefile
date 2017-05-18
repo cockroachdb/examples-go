@@ -26,7 +26,7 @@ GOFLAGS :=
 STATIC :=
 
 ifeq ($(STATIC),1)
-LDFLAGS += -extldflags "-static"
+LDFLAGS += -s -w -extldflags "-static"
 endif
 
 .PHONY: all

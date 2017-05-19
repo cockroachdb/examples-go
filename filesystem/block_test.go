@@ -241,7 +241,7 @@ func TestReadWriteBlocks(t *testing.T) {
 	part2 := make([]byte, BlockSize*2+250, BlockSize*2+250)
 	fullData := append(part1, part2...)
 	part3 := randutil.RandBytes(rng, BlockSize+123)
-	if err := write(db, id, uint64(len(part1)), uint64(len(fullData)), part3); err != nil {
+	if err = write(db, id, uint64(len(part1)), uint64(len(fullData)), part3); err != nil {
 		t.Fatal(err)
 	}
 	fullData = append(fullData, part3...)
@@ -263,7 +263,7 @@ func TestReadWriteBlocks(t *testing.T) {
 
 	// Now write into the middle of the file.
 	part2 = randutil.RandBytes(rng, len(part2))
-	if err := write(db, id, uint64(len(fullData)), uint64(len(part1)), part2); err != nil {
+	if err = write(db, id, uint64(len(fullData)), uint64(len(part1)), part2); err != nil {
 		t.Fatal(err)
 	}
 	fullData = append(part1, part2...)
@@ -286,7 +286,7 @@ func TestReadWriteBlocks(t *testing.T) {
 
 	// New file.
 	id2 := uint64(20)
-	if err := write(db, id2, 0, 0, []byte("1")); err != nil {
+	if err = write(db, id2, 0, 0, []byte("1")); err != nil {
 		t.Fatal(err)
 	}
 	readData, err = read(db, id2, 0, 1)
@@ -297,7 +297,7 @@ func TestReadWriteBlocks(t *testing.T) {
 		t.Fatalf("mismatch: %s", readData)
 	}
 
-	if err := write(db, id2, 1, 0, []byte("22")); err != nil {
+	if err = write(db, id2, 1, 0, []byte("22")); err != nil {
 		t.Fatal(err)
 	}
 	readData, err = read(db, id2, 0, 2)

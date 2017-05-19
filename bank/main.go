@@ -168,7 +168,7 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS bank"); err != nil {
+	if _, err = db.Exec("CREATE DATABASE IF NOT EXISTS bank"); err != nil {
 		log.Fatal(err)
 	}
 

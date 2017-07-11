@@ -420,3 +420,64 @@ UPDATE users SET commentCount = commentCount - 1 WHERE id = $1;
 	}
 	return nil
 }
+
+const (
+	// top10Commenters scans all the comments, grouping by userid, to find the
+	// top commenters. Note that this query is artificial, as this value can be
+	// queried directly from the user table.
+	selectTop10Commenters = `SELECT count(*) AS post_count FROM comments GROUP BY userid ORDER BY post_count DESC LIMIT 10;`
+	// top10Posters scans all the photos, grouping by userid, to find the
+	// top photo posters. Note that this query is artificial, as this value can
+	// be queried directly from the user table.
+	selectTop10Posters = `SELECT count(*) AS photos_count FROM photos GROUP BY userid ORDER BY photos_count DESC LIMIT 10;`
+	// top10Photos scans all the photos ordered by commentcount, to find the most
+	// commented photos. It does this directly on the photos table.
+	selectTop10Photos = `SELECT commentcount FROM photos ORDER BY commentcount DESC LIMIT 10`
+	// top10PhotoPostersNames finds the top photos, but joins this on the users table
+	// to return the names of the users.
+	selectTop10PhotoPostersNames = `SELECT users.name FROM photos JOIN users ON userid = userid ORDER BY photos.commentcount DESC LIMIT 10;`
+)
+
+// analyticsQuery runs the selected
+func analyicsQuery(ctx context.Context, tx *sql.Tx, analyticsOpType int) error {
+	var selectSQL string
+	var outputTypeString bool
+	switch analyticsOpType {
+	case topCommentersAnalyticsOp:
+		selectSQL = selectTop10Commenters
+	case topPostersAnalyticsOp:
+		selectSQL = selectTop10Posters
+	case topPhotosAnalyticsOp:
+		selectSQL = selectTop10Photos
+	case top10PhotoPostersNamesAnalytcsOp:
+		selectSQL = selectTop10PhotoPostersNames
+		outputTypeString = true
+	}
+
+	rows, err := tx.QueryContext(ctx, selectSQL)
+	switch {
+	case err == sql.ErrNoRows:
+		return nil
+	case err != nil:
+		return err
+	}
+
+	for rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if outputTypeString {
+			var user string
+			if err := rows.Scan(&user); err != nil {
+				return errors.Errorf("failed to scan string result set for top10Commenters: %s", err)
+			}
+		} else {
+			var count int
+			if err := rows.Scan(&count); err != nil {
+				return errors.Errorf("failed to scan int result set for top10Commenters: %s", err)
+			}
+		}
+	}
+
+	return nil
+}

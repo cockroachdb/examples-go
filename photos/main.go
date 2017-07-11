@@ -57,9 +57,11 @@ func normalizeStdFlagName(s string) string {
 }
 
 var usage = map[string]string{
-	"db":             "URL to the CockroachDB cluster",
-	"users":          "number of concurrent simulated users",
-	"benchmark-name": "name of benchmark to report for Go benchmark results",
+	"db":                     "URL to the CockroachDB cluster",
+	"users":                  "number of concurrent simulated users",
+	"benchmark-name":         "name of benchmark to report for Go benchmark results",
+	"analytics":              "true/false to indicate if analytics queries should be occasionally run (default false)",
+	"analytics-wait-seconds": "the wait time between successive analytics queries in seconds. Note that this is measured from the end of the last query to the start of the next query. (default 30s)",
 }
 
 // A Config holds configuration data.
@@ -73,12 +75,21 @@ type Config struct {
 	// Name of benchmark to use in benchmark results outputted upon process
 	// termination. Used for analyzing performance over time.
 	BenchmarkName string
+	// AnalyticsQueries controls if analytics queries are periodically run.
+	// Used for testing DistSQL code paths.
+	AnalyticsQueries bool
+	// AnalyticsQueriesWaitSeconds is the wait time between successive
+	// analytics queries in seconds. Note that this is measured from the end
+	// of the last query to the start of the next query.
+	AnalyticsQueriesWaitSeconds int
 }
 
 var cfg = Config{
-	DBUrl:         "postgresql://root@localhost:26257/photos?sslmode=disable",
-	NumUsers:      1,
-	BenchmarkName: "BenchmarkPhotos",
+	DBUrl:                       "postgresql://root@localhost:26257/photos?sslmode=disable",
+	NumUsers:                    1,
+	BenchmarkName:               "BenchmarkPhotos",
+	AnalyticsQueries:            false,
+	AnalyticsQueriesWaitSeconds: 30,
 }
 
 var loadCmd = &cobra.Command{
@@ -126,6 +137,11 @@ func runLoad(c *cobra.Command, args []string) error {
 	for i := 0; i < cfg.NumUsers; i++ {
 		go func() {
 			errChan <- startUser(ctx, cfg)
+		}()
+	}
+	if cfg.AnalyticsQueries {
+		go func() {
+			errChan <- startAnalytics(ctx, cfg)
 		}()
 	}
 
@@ -251,6 +267,8 @@ func init() {
 	loadCmd.PersistentFlags().StringVarP(&cfg.DBUrl, "db", "", cfg.DBUrl, usage["db"])
 	loadCmd.PersistentFlags().StringVarP(&cfg.BenchmarkName, "benchmark-name", "", cfg.BenchmarkName,
 		usage["benchmark-name"])
+	loadCmd.PersistentFlags().BoolVarP(&cfg.AnalyticsQueries, "analytics", "", cfg.AnalyticsQueries, usage["analytics"])
+	loadCmd.PersistentFlags().IntVarP(&cfg.AnalyticsQueriesWaitSeconds, "analytics-wait-seconds", "", cfg.AnalyticsQueriesWaitSeconds, usage["analytics-wait-seconds"])
 }
 
 // Run ...

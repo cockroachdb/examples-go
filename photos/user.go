@@ -50,6 +50,14 @@ const (
 	deletePhotoOp
 )
 
+const (
+	topCommentersAnalyticsOp = iota
+	topPostersAnalyticsOp
+	topPhotosAnalyticsOp
+	top10PhotoPostersNamesAnalytcsOp
+	numAnalyticsOps
+)
+
 type opDesc struct {
 	typ      int
 	name     string
@@ -75,20 +83,23 @@ var ops = []*opDesc{
 
 var stats struct {
 	sync.Mutex
-	start      time.Time
-	computing  bool
-	totalOps   int
-	noUserOps  int
-	noPhotoOps int
-	failedOps  int
-	hist       *hdrhistogram.Histogram
-	opCounts   map[int]int
+	start             time.Time
+	computing         bool
+	totalOps          int
+	noUserOps         int
+	noPhotoOps        int
+	noAnalyticsOps    int
+	failedOps         int
+	hist              *hdrhistogram.Histogram
+	opCounts          map[int]int
+	analyticsOpCounts map[int]int
 }
 
 func init() {
 	stats.hist = hdrhistogram.New(0, 0x7fffffff, 1)
 	stats.start = time.Now()
 	stats.opCounts = map[int]int{}
+	stats.analyticsOpCounts = map[int]int{}
 
 	// Compute the total of all op relative frequencies.
 	var relFreqTotal float64
@@ -115,6 +126,10 @@ func randomOp() *opDesc {
 	return ops[len(ops)-1]
 }
 
+func randomAnalyticsOp() int {
+	return rand.Intn(numAnalyticsOps)
+}
+
 func startStats(ctx context.Context) error {
 	var lastOps int
 	ticker := time.NewTicker(statsInterval)
@@ -135,6 +150,31 @@ func startStats(ctx context.Context) error {
 			stats.Unlock()
 			return ctx.Err()
 		}
+	}
+}
+
+// startAnalytics simulates periodic analytics queries until the context
+// indicates it's time to exit.
+func startAnalytics(ctx context.Context, cfg Config) error {
+	for {
+		opType := randomAnalyticsOp()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := runAnalyticsOp(ctx, cfg, opType)
+		stats.Lock()
+		stats.totalOps++
+		stats.noAnalyticsOps++
+		stats.analyticsOpCounts[opType]++
+		if err != nil {
+			stats.failedOps++
+			log.Printf("failed to run analytics op: %s: %s", opType, err)
+		}
+		stats.Unlock()
+
+		timer := time.NewTimer(time.Second * time.Duration(cfg.AnalyticsQueriesWaitSeconds))
+		<-timer.C
+
 	}
 }
 
@@ -206,6 +246,12 @@ func runUserOp(ctx context.Context, cfg Config, userID, opType int) error {
 		default:
 			return errors.Errorf("unsupported op type: %d", opType)
 		}
+	})
+}
+
+func runAnalyticsOp(ctx context.Context, cfg Config, analyticsOpType int) error {
+	return crdb.ExecuteTx(cfg.DB, func(tx *sql.Tx) error {
+		return analyicsQuery(ctx, tx, analyticsOpType)
 	})
 }
 

@@ -421,6 +421,87 @@ UPDATE users SET commentCount = commentCount - 1 WHERE id = $1;
 	return nil
 }
 
+// listMostCommentedPhotos queries the top 100 most commented on photos for the
+// first user with ID >= userID.
+func listMostCommentedPhotos(ctx context.Context, tx *sql.Tx, userID int) error {
+	var err error
+	userID, err = findClosestUserByID(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	const selectSQL = `
+SELECT id, caption, commentCount, latitude, longitude, timestamp
+FROM photos
+WHERE userID = $1
+ORDER BY commentcount DESC LIMIT 100
+	`
+	rows, err := tx.QueryContext(ctx, selectSQL, userID)
+	switch {
+	case err == sql.ErrNoRows:
+		return nil
+	case err != nil:
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		var id []byte
+		var caption string
+		var cCount int
+		var lat, lon float64
+		var ts time.Time
+		if err := rows.Scan(&id, &caption, &cCount, &lat, &lon, &ts); err != nil {
+			return errors.Errorf("failed to scan result set for user %d: %s", userID, err)
+		}
+	}
+
+	return nil
+}
+
+// listCommentsAlphabeticallyOp retrieves the first 100 comments for a photo
+// in alphabetical order for the first user with ID >= userID. This query is
+// semantically useless but tests sorting by a non-indexed column, which
+// triggers distributed SQL.
+func listCommentsAlphabetically(ctx context.Context, tx *sql.Tx, userID int) error {
+	photoID, err := chooseRandomPhoto(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	const selectSQL = `
+	SELECT commentID, userID, message, timestamp
+	FROM comments
+	WHERE photoID = $1
+	ORDER BY message LIMIT 100
+	`
+	rows, err := tx.QueryContext(ctx, selectSQL, photoID)
+	switch {
+	case err == sql.ErrNoRows:
+		return nil
+	case err != nil:
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	// Process all rows.
+	for rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		var commentID []byte
+		var message string
+		var userID int
+		var ts time.Time
+		if err := rows.Scan(&commentID, &userID, &message, &ts); err != nil {
+			return errors.Errorf("failed to scan result set for photo %q: %s", photoID, err)
+		}
+	}
+
+	return nil
+}
+
 const (
 	// top10Commenters scans all the comments, grouping by userid, to find the
 	// top commenters. Note that this query is artificial, as this value can be

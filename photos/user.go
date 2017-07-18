@@ -48,6 +48,8 @@ const (
 	updateCommentOp
 	deleteCommentOp
 	deletePhotoOp
+	listMostCommentedPhotosOp
+	listCommentsAlphabeticallyOp
 )
 
 const (
@@ -77,6 +79,8 @@ var ops = []*opDesc{
 	{listCommentsOp, "list comments", 20, 0},
 	{updatePhotoOp, "update photo", 2.5, 0},
 	{updateCommentOp, "update comment", 5, 0},
+	{listMostCommentedPhotosOp, "list most commented on photos", 25, 0},
+	{listCommentsAlphabeticallyOp, "list comments alphabetically", 15, 0},
 	{deleteCommentOp, "delete comment", 2.5, 0},
 	{deletePhotoOp, "delete photo", 1.25, 0},
 }
@@ -244,6 +248,10 @@ func runUserOp(ctx context.Context, cfg Config, userID, opType int) error {
 			return deletePhoto(ctx, tx, userID)
 		case deleteCommentOp:
 			return deleteComment(ctx, tx, userID)
+		case listMostCommentedPhotosOp:
+			return listMostCommentedPhotos(ctx, tx, userID)
+		case listCommentsAlphabeticallyOp:
+			return listCommentsAlphabetically(ctx, tx, userID)
 		default:
 			return errors.Errorf("unsupported op type: %d", opType)
 		}

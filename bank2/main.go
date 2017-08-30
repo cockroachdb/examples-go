@@ -18,6 +18,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -80,7 +81,7 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 		start := time.Now()
 		attempts := 0
 
-		if err := crdb.ExecuteTx(db, func(tx *sql.Tx) error {
+		if err := crdb.ExecuteTx(context.TODO(), db, nil, func(tx *sql.Tx) error {
 			attempts++
 			if attempts > 1 {
 				atomic.AddInt32(&aggr.retries, 1)

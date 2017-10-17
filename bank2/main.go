@@ -139,8 +139,8 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 			log.Printf("failed transaction: %v", err)
 			continue
 		}
-		atomic.AddInt32(&successCount, 1)
 		if fromBalance >= amount {
+			atomic.AddInt32(&successCount, 1)
 			atomic.AddInt64(&aggr.read, readDuration.Nanoseconds())
 			atomic.AddInt64(&aggr.write, time.Since(startWrite).Nanoseconds())
 			atomic.AddInt64(&aggr.total, time.Since(start).Nanoseconds())

@@ -112,7 +112,7 @@ func newBlockWriter(db *sql.DB) *blockWriter {
 func (bw *blockWriter) run(errCh chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	id := uuid.NewV4().String()
+	id := uuid.Must(uuid.NewV4()).String()
 	var blockCount uint64
 
 	for {

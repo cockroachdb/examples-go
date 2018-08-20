@@ -40,6 +40,7 @@ var numTransfers = flag.Int("num-transfers", 0, "Number of transfers (0 to conti
 var numAccounts = flag.Int("num-accounts", 100, "Number of accounts.")
 var concurrency = flag.Int("concurrency", 16, "Number of concurrent actors moving money.")
 var contention = flag.String("contention", "low", "Contention model {low | high}.")
+var updatemethod = flag.String("updatemethod", "update", "update or upsert DML {update | upsert}.")
 var balanceCheckInterval = flag.Duration("balance-check-interval", time.Second, "Interval of balance check.")
 var parallelStmts = flag.Bool("parallel-stmts", false, "Run independent statements in parallel.")
 
@@ -112,7 +113,12 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 			}
 			insertTxn := `INSERT INTO transaction (id, txn_ref) VALUES ($1, $2)`
 			insertTxnLeg := `INSERT INTO transaction_leg (account_id, amount, running_balance, txn_id) VALUES ($1, $2, $3, $4)`
-			updateAcct := `UPDATE account SET balance = $1 WHERE id = $2`
+			var updateAcct string
+			if *updatemethod == "update" {
+				updateAcct = `UPDATE account SET balance = $1 WHERE id = $2`				
+			} else {
+				updateAcct = `INSERT into account (balance,id) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET balance = excluded.balance`				
+			}
 			if *parallelStmts {
 				const parallelize = ` RETURNING NOTHING`
 				insertTxn += parallelize

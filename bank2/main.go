@@ -117,7 +117,7 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 			if *updatemethod == "update" {
 				updateAcct = `UPDATE account SET balance = $1 WHERE id = $2`				
 			} else {
-				updateAcct = `INSERT into account (balance,id) values ($1,$2) on conflict (id) do update set balance = excluded.balance`				
+				updateAcct = `INSERT into account (balance,id) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET balance = excluded.balance`				
 			}
 			if *parallelStmts {
 				const parallelize = ` RETURNING NOTHING`

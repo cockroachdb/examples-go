@@ -1,4 +1,4 @@
-FROM golang:1.7.1
+FROM golang:1.11.1
 
 COPY *.go src/github.com/cockroachdb/examples-go/block_writer/
 

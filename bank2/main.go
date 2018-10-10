@@ -115,9 +115,9 @@ func moveMoney(db *sql.DB, aggr *measurement) {
 			insertTxnLeg := `INSERT INTO transaction_leg (account_id, amount, running_balance, txn_id) VALUES ($1, $2, $3, $4)`
 			var updateAcct string
 			if *updatemethod == "update" {
-				updateAcct = `UPDATE account SET balance = $1 WHERE id = $2`				
+				updateAcct = `UPDATE account SET balance = $1 WHERE id = $2`
 			} else {
-				updateAcct = `INSERT into account (balance,id) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET balance = excluded.balance`				
+				updateAcct = `INSERT into account (balance,id) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET balance = excluded.balance`
 			}
 			if *parallelStmts {
 				const parallelize = ` RETURNING NOTHING`

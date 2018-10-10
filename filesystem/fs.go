@@ -18,6 +18,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"syscall"
@@ -71,12 +72,12 @@ func initSchema(db *sql.DB) error {
 // parentID: inode ID of the parent directory.
 // name: name of the new node
 // node: new node
-func (cfs CFS) create(parentID uint64, name string, node *Node) error {
+func (cfs CFS) create(ctx context.Context, parentID uint64, name string, node *Node) error {
 	inode := node.toJSON()
 	const insertNode = `INSERT INTO fs.inode VALUES ($1, $2)`
 	const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
 
-	err := crdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(ctx, cfs.db, nil /* txopts */, func(tx *sql.Tx) error {
 		if _, err := tx.Exec(insertNode, node.ID, inode); err != nil {
 			return err
 		}
@@ -90,13 +91,13 @@ func (cfs CFS) create(parentID uint64, name string, node *Node) error {
 
 // remove removes a node give its name and its parent ID.
 // If 'checkChildren' is true, fails if the node has children.
-func (cfs CFS) remove(parentID uint64, name string, checkChildren bool) error {
+func (cfs CFS) remove(ctx context.Context, parentID uint64, name string, checkChildren bool) error {
 	const lookupSQL = `SELECT id FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
 	const deleteNamespace = `DELETE FROM fs.namespace WHERE (parentID, name) = ($1, $2)`
 	const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
 	const deleteBlock = `DELETE FROM fs.block WHERE id = $1`
 
-	err := crdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(ctx, cfs.db, nil /* txopts */, func(tx *sql.Tx) error {
 		// Start by looking up the node ID.
 		var id uint64
 		if err := tx.QueryRow(lookupSQL, parentID, name).Scan(&id); err != nil {
@@ -185,7 +186,9 @@ func validateRename(tx *sql.Tx, source, destination *Node) error {
 // rename moves 'oldParentID/oldName' to 'newParentID/newName'.
 // If 'newParentID/newName' already exists, it is deleted.
 // See NOTE on node.go:Rename.
-func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) error {
+func (cfs CFS) rename(
+	ctx context.Context, oldParentID, newParentID uint64, oldName, newName string,
+) error {
 	if oldParentID == newParentID && oldName == newName {
 		return nil
 	}
@@ -194,7 +197,7 @@ func (cfs CFS) rename(oldParentID, newParentID uint64, oldName, newName string) 
 	const insertNamespace = `INSERT INTO fs.namespace VALUES ($1, $2, $3)`
 	const updateNamespace = `UPDATE fs.namespace SET id = $1 WHERE (parentID, name) = ($2, $3)`
 	const deleteInode = `DELETE FROM fs.inode WHERE id = $1`
-	err := crdb.ExecuteTx(cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(ctx, cfs.db, nil /* txopts */, func(tx *sql.Tx) error {
 		// Lookup source inode.
 		srcObject, err := getInode(tx, oldParentID, oldName)
 		if err != nil {

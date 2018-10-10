@@ -38,6 +38,7 @@ import (
 
 	"github.com/codahale/hdrhistogram"
 	"github.com/satori/go.uuid"
+
 	// Import postgres driver.
 	_ "github.com/lib/pq"
 )

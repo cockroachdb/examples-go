@@ -35,11 +35,11 @@ function push_one_binary {
 }
 
 for proj in bank ledger block_writer fakerealtime filesystem photos; do
-	docker run \
-		--workdir=/go/src/github.com/cockroachdb/examples-go \
-		--volume="${GOPATH%%:*}/src":/go/src \
-		--volume="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)":/go/src/github.com/cockroachdb/examples-go \
-		--rm \
-		cockroachdb/builder:20170422-212842 make ${proj} STATIC=1
-	push_one_binary ${proj}/${proj}
+  docker run \
+    --workdir=/go/src/github.com/cockroachdb/examples-go \
+    --volume="${GOPATH%%:*}/src":/go/src \
+    --volume="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)":/go/src/github.com/cockroachdb/examples-go \
+    --rm \
+    cockroachdb/builder:20170422-212842 make ${proj} STATIC=1
+  push_one_binary ${proj}/${proj}
 done

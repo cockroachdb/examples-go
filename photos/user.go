@@ -175,7 +175,7 @@ func startAnalytics(ctx context.Context, cfg Config) error {
 		stats.analyticsOpCounts[opType]++
 		if err != nil {
 			stats.failedOps++
-			log.Printf("failed to run analytics op: %s: %s", opType, err)
+			log.Printf("failed to run analytics op: %d: %s", opType, err)
 		}
 		stats.Unlock()
 
@@ -227,7 +227,7 @@ func startUser(ctx context.Context, cfg Config) error {
 // runUserOp starts a transaction and creates the user if it doesn't
 // yet exist.
 func runUserOp(ctx context.Context, cfg Config, userID, opType int) error {
-	return crdb.ExecuteTx(cfg.DB, func(tx *sql.Tx) error {
+	return crdb.ExecuteTx(ctx, cfg.DB, nil /* txopts */, func(tx *sql.Tx) error {
 		switch opType {
 		case createUserOp:
 			return createUser(ctx, tx, userID)
@@ -259,7 +259,7 @@ func runUserOp(ctx context.Context, cfg Config, userID, opType int) error {
 }
 
 func runAnalyticsOp(ctx context.Context, cfg Config, analyticsOpType int) error {
-	return crdb.ExecuteTx(cfg.DB, func(tx *sql.Tx) error {
+	return crdb.ExecuteTx(ctx, cfg.DB, nil /* txopts */, func(tx *sql.Tx) error {
 		return analyticsQuery(ctx, tx, analyticsOpType)
 	})
 }

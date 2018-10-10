@@ -41,6 +41,7 @@ test:
 deps:
 	$(GO) get -d bazil.org/fuse
 	$(GO) get -d -t ./...
+	$(GO) get github.com/golang/lint/golint
 
 .PHONY: build
 build: deps block_writer fakerealtime filesystem bank photos
@@ -84,17 +85,15 @@ check:
 	@echo "checking for \"path\" imports"
 	@! git grep -F '"path"' -- '*.go'
 	@echo "errcheck"
-	@errcheck ./...
+	@errcheck -ignore=Fprintf ./...
 	@echo "vet"
 	@! go tool vet . 2>&1 | \
 	  grep -vE '^vet: cannot process directory .git'
 	@echo "vet --shadow"
 	@! go tool vet --shadow . 2>&1 | \
-	  grep -vE '(declaration of err shadows|^vet: cannot process directory \.git)'
+	  grep -vE '(declaration of "err" shadows|^vet: cannot process directory \.git)'
 	@echo "golint"
 	@! golint ./... | grep -vE '(\.pb\.go)'
-	@echo "varcheck"
-	@varcheck -e ./...
 	@echo "gofmt (simplify)"
 	@! gofmt -s -d -l . 2>&1 | grep -vE '^\.git/'
 	@echo "goimports"

@@ -60,6 +60,7 @@ import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
+
 	// Import postgres driver.
 	_ "github.com/lib/pq"
 )

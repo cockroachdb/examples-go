@@ -21,6 +21,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -193,7 +194,7 @@ func (w *worker) run(db *sql.DB) {
 		if *verbose {
 			w.l("running %v", req)
 		}
-		if err := crdb.ExecuteTx(db, func(tx *sql.Tx) error {
+		if err := crdb.ExecuteTx(context.TODO(), db, nil /* txopts */, func(tx *sql.Tx) error {
 			return doPosting(tx, req)
 		}); err != nil {
 			pqErr, ok := err.(*pq.Error)

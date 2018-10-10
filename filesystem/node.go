@@ -135,7 +135,9 @@ func (n *Node) Attr(_ context.Context, a *fuse.Attr) error {
 }
 
 // Setattr modifies node metadata. This includes changing the size.
-func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
+func (n *Node) Setattr(
+	ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse,
+) error {
 	if !req.Valid.Size() {
 		// We can exit early since only setting the size is implemented.
 		return nil
@@ -163,7 +165,7 @@ func (n *Node) Setattr(_ context.Context, req *fuse.SetattrRequest, resp *fuse.S
 	originalSize := n.Size
 
 	// Wrap everything inside a transaction.
-	err := crdb.ExecuteTx(n.cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(ctx, n.cfs.db, nil /* txopts */, func(tx *sql.Tx) error {
 		// Resize blocks as needed.
 		if err := resizeBlocks(tx, n.ID, n.Size, req.Size); err != nil {
 			return err
@@ -214,7 +216,7 @@ func (n *Node) ReadDirAll(_ context.Context) ([]fuse.Dirent, error) {
 // Mkdir creates a directory in 'n'.
 // We let the sql query fail if the directory already exists.
 // TODO(marc): better handling of errors.
-func (n *Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+func (n *Node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	if !n.isDir() {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
@@ -223,7 +225,7 @@ func (n *Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error)
 	}
 
 	node := n.cfs.newDirNode()
-	err := n.cfs.create(n.ID, req.Name, node)
+	err := n.cfs.create(ctx, n.ID, req.Name, node)
 	if err != nil {
 		return nil, err
 	}
@@ -231,8 +233,9 @@ func (n *Node) Mkdir(_ context.Context, req *fuse.MkdirRequest) (fs.Node, error)
 }
 
 // Create creates a new file in the receiver directory.
-func (n *Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (
-	fs.Node, fs.Handle, error) {
+func (n *Node) Create(
+	ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse,
+) (fs.Node, fs.Handle, error) {
 	if !n.isDir() {
 		return nil, nil, fuse.Errno(syscall.ENOTDIR)
 	}
@@ -243,7 +246,7 @@ func (n *Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.Cre
 	}
 
 	node := n.cfs.newFileNode()
-	err := n.cfs.create(n.ID, req.Name, node)
+	err := n.cfs.create(ctx, n.ID, req.Name, node)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -251,21 +254,21 @@ func (n *Node) Create(_ context.Context, req *fuse.CreateRequest, resp *fuse.Cre
 }
 
 // Remove may be unlink or rmdir.
-func (n *Node) Remove(_ context.Context, req *fuse.RemoveRequest) error {
+func (n *Node) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	if !n.isDir() {
 		return fuse.Errno(syscall.ENOTDIR)
 	}
 
 	if req.Dir {
 		// Rmdir.
-		return n.cfs.remove(n.ID, req.Name, true /* checkChildren */)
+		return n.cfs.remove(ctx, n.ID, req.Name, true /* checkChildren */)
 	}
 	// Unlink file/symlink.
-	return n.cfs.remove(n.ID, req.Name, false /* !checkChildren */)
+	return n.cfs.remove(ctx, n.ID, req.Name, false /* !checkChildren */)
 }
 
 // Write writes data to 'n'. It may overwrite existing data, or grow it.
-func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+func (n *Node) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 	if !n.isRegular() {
 		return fuse.Errno(syscall.EINVAL)
 	}
@@ -288,7 +291,7 @@ func (n *Node) Write(_ context.Context, req *fuse.WriteRequest, resp *fuse.Write
 	originalSize := n.Size
 
 	// Wrap everything inside a transaction.
-	err := crdb.ExecuteTx(n.cfs.db, func(tx *sql.Tx) error {
+	err := crdb.ExecuteTx(ctx, n.cfs.db, nil /* txopts */, func(tx *sql.Tx) error {
 
 		// Update blocks. They will be added as needed.
 		if err := write(tx, n.ID, n.Size, uint64(req.Offset), req.Data); err != nil {
@@ -372,12 +375,12 @@ func (n *Node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.No
 	if !n.isDir() || !newNode.isDir() {
 		return fuse.Errno(syscall.ENOTDIR)
 	}
-	return n.cfs.rename(n.ID, newNode.ID, req.OldName, req.NewName)
+	return n.cfs.rename(ctx, n.ID, newNode.ID, req.OldName, req.NewName)
 }
 
 // Symlink creates a new symbolic link in the receiver node, which must
 // be a directory.
-func (n *Node) Symlink(_ context.Context, req *fuse.SymlinkRequest) (fs.Node, error) {
+func (n *Node) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node, error) {
 	if !n.isDir() {
 		return nil, fuse.Errno(syscall.ENOTDIR)
 	}
@@ -386,7 +389,7 @@ func (n *Node) Symlink(_ context.Context, req *fuse.SymlinkRequest) (fs.Node, er
 	}
 	node := n.cfs.newSymlinkNode()
 	node.SymlinkTarget = req.Target
-	err := n.cfs.create(n.ID, req.NewName, node)
+	err := n.cfs.create(ctx, n.ID, req.NewName, node)
 	if err != nil {
 		return nil, err
 	}
